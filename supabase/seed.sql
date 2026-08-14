@@ -1,0 +1,6 @@
+-- ============================================================
+-- BB Sales | بي بي سيلز — Seed
+-- Zero-state by design: NO demo accounts, NO sample figures.
+-- All metrics start at 0.00 until real data is added by the
+-- manager and reps. Nothing to seed here.
+-- ============================================================
