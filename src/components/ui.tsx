@@ -122,12 +122,14 @@ export function Sheet({
   title,
   children,
   footer,
+  size = 'md',
 }: {
   open: boolean
   onClose: () => void
   title: ReactNode
   children: ReactNode
   footer?: ReactNode
+  size?: 'md' | 'lg'
 }) {
   if (!open) return null
   return (
@@ -136,7 +138,9 @@ export function Sheet({
       <div
         role="dialog"
         aria-modal="true"
-        className="relative w-full sm:max-w-lg max-h-[92dvh] flex flex-col rounded-t-2xl sm:rounded-2xl bg-card text-card-foreground border border-border shadow-pop fade-in-up"
+        className={`relative w-full flex flex-col rounded-t-2xl sm:rounded-2xl bg-card text-card-foreground border border-border shadow-pop fade-in-up ${
+          size === 'lg' ? 'sm:max-w-2xl' : 'sm:max-w-lg'
+        } max-h-[92dvh]`}
       >
         <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-4">
           <h2 className="text-lg font-extrabold">{title}</h2>

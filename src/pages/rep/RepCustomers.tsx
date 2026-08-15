@@ -30,6 +30,7 @@ export default function RepCustomers() {
   const [name, setName] = useState('')
   const [phone, setPhone] = useState('')
   const [address, setAddress] = useState('')
+  const [debtLimit, setDebtLimit] = useState('')
   const [latitude, setLatitude] = useState<number | null>(null)
   const [longitude, setLongitude] = useState<number | null>(null)
   const [locating, setLocating] = useState(false)
@@ -75,6 +76,7 @@ export default function RepCustomers() {
         name: name.trim(),
         phone: phone.trim() || undefined,
         address: address.trim() || undefined,
+        debt_limit: debtLimit.trim() ? Number(debtLimit) : null,
         latitude,
         longitude,
       })
@@ -83,6 +85,7 @@ export default function RepCustomers() {
       setName('')
       setPhone('')
       setAddress('')
+      setDebtLimit('')
       setLatitude(null)
       setLongitude(null)
     } catch (e) {
@@ -151,9 +154,21 @@ export default function RepCustomers() {
                   <span className="text-end shrink-0">
                     <span className="block text-xs font-bold text-muted-foreground">الدين</span>
                     <Money value={debt.total_debt} className="font-extrabold text-destructive" />
+                    {debt.debt_limit != null && (
+                      <span className="block text-[10px] text-muted-foreground tnum" dir="ltr">
+                        / {debt.debt_limit.toFixed(2)} حد
+                      </span>
+                    )}
                   </span>
                 ) : (
-                  <span className="badge-accent shrink-0">لا دين</span>
+                  <span className="shrink-0 text-end space-y-0.5">
+                    <span className="badge-accent block w-fit ms-auto">لا دين</span>
+                    {debt?.debt_limit != null && (
+                      <span className="block text-[10px] text-muted-foreground tnum" dir="ltr">
+                        الحد {debt.debt_limit.toFixed(2)}
+                      </span>
+                    )}
+                  </span>
                 )}
               </button>
             )
@@ -184,6 +199,11 @@ export default function RepCustomers() {
           <div>
             <label htmlFor="cphone" className="label">رقم الهاتف</label>
             <input id="cphone" type="tel" dir="ltr" className="input text-left" placeholder="05xxxxxxxx" value={phone} onChange={(e) => setPhone(e.target.value)} />
+          </div>
+          <div>
+            <label htmlFor="climit" className="label">حد الدين المسموح (اختياري)</label>
+            <input id="climit" type="number" inputMode="decimal" min={0} dir="ltr" className="input text-left tnum" placeholder="مثال: 500" value={debtLimit} onChange={(e) => setDebtLimit(e.target.value)} />
+            <p className="text-xs text-muted-foreground mt-1">اتركه فارغاً للسماح بدين بدون حد.</p>
           </div>
           <div>
             <label htmlFor="caddr" className="label">العنوان</label>
@@ -249,6 +269,12 @@ export default function RepCustomers() {
               </div>
             ) : (
               <span className="badge-accent w-fit">لا توجد ديون</span>
+            )}
+            {selected.debt_limit != null && (
+              <div className="card p-4 flex items-center justify-between">
+                <span className="text-sm font-bold">حد الدين المسموح</span>
+                <Money value={selected.debt_limit} className="text-xl font-extrabold" />
+              </div>
             )}
           </div>
         )}

@@ -14,6 +14,8 @@ import {
 import { Sheet, EmptyState, useToast } from '../../components/ui'
 import { repDailySummary } from '../../lib/selectors'
 import { todayKey } from '../../lib/format'
+import type { UserProfile } from '../../lib/types'
+import RepDetails from './RepDetails'
 
 interface AddRepInput {
   full_name: string
@@ -33,6 +35,7 @@ export default function ManagerReps() {
   const [busy, setBusy] = useState(false)
   const [createdLink, setCreatedLink] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
+  const [selectedRep, setSelectedRep] = useState<UserProfile | null>(null)
 
   const today = todayKey()
 
@@ -107,7 +110,11 @@ export default function ManagerReps() {
           {reps.map((r) => {
             const daily = repDailySummary(data, r.id, today).get(r.id)
             return (
-              <div key={r.id} className="card p-4 flex items-center gap-3">
+              <button
+                key={r.id}
+                onClick={() => setSelectedRep(r)}
+                className="card w-full p-4 flex items-center gap-3 text-start hover:border-primary/40"
+              >
                 <span className="grid size-11 shrink-0 place-items-center rounded-xl bg-secondary text-secondary-foreground font-extrabold">
                   {r.full_name.slice(0, 1)}
                 </span>
@@ -127,7 +134,7 @@ export default function ManagerReps() {
                     {(daily?.cash_collected ?? 0).toFixed(2)} ر.س
                   </div>
                 </div>
-              </div>
+              </button>
             )
           })}
         </div>
@@ -234,6 +241,11 @@ export default function ManagerReps() {
             </div>
           </div>
         )}
+      </Sheet>
+
+      {/* Per-rep drill-down */}
+      <Sheet open={!!selectedRep} onClose={() => setSelectedRep(null)} title={selectedRep?.full_name ?? ''} size="lg">
+        {selectedRep && <RepDetails rep={selectedRep} onClose={() => setSelectedRep(null)} />}
       </Sheet>
     </div>
   )

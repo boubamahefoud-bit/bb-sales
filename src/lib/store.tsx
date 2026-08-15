@@ -37,6 +37,7 @@ interface StoreCtx {
   addRep: (input: { full_name: string; email: string; password: string; truck_id: string }) => Promise<{ rep: UserProfile; accessLink: string }>
   addCustomer: (input: NewCustomerInput) => Promise<Customer>
   updateCustomer: (id: string, patch: Partial<Customer>) => Promise<void>
+  deleteCustomer: (id: string) => Promise<void>
   createSale: (input: { customerId: string; paidAmount: number; items: { product_name: string; quantity: number; unit_price: number }[] }) => Promise<SalesTransaction>
   addInventoryRow: (input: Omit<TruckInventoryItem, 'id' | 'updated_at'>) => Promise<void>
   updateInventory: (id: string, patch: Partial<TruckInventoryItem>) => Promise<void>
@@ -322,7 +323,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (isLocal) return localRef.current!.addCustomer(input)
       const { data, error: e } = await supabase!
         .from('customers')
-        .insert({ ...input, store_id: user.store_id, created_by_rep_id: user.id })
+        .insert({
+          name: input.name,
+          phone: input.phone ?? null,
+          address: input.address ?? null,
+          latitude: input.latitude ?? null,
+          longitude: input.longitude ?? null,
+          debt_limit: input.debt_limit ?? null,
+          store_id: user.store_id,
+          created_by_rep_id: input.created_by_rep_id ?? user.id,
+        })
         .select()
         .single()
       if (e) throw e
@@ -345,17 +355,42 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [isLocal, refresh],
   )
 
+  const deleteCustomer = useCallback(
+    async (id: string) => {
+      if (isLocal) {
+        await localRef.current!.deleteCustomer(id)
+      } else {
+        const { error: e } = await supabase!.from('customers').delete().eq('id', id)
+        if (e) throw e
+      }
+      await refresh()
+    },
+    [isLocal, refresh],
+  )
+
   const createSale = useCallback(
     async (input: { customerId: string; paidAmount: number; items: { product_name: string; quantity: number; unit_price: number }[] }) => {
       if (!user) throw new Error('unauthorized')
+      const total = input.items.reduce((s, i) => s + i.quantity * i.unit_price, 0)
+      const paid = Math.min(input.paidAmount, total)
+      const debt = Math.max(0, total - paid)
+
+      // Client-side debt-limit guard (the DB trigger is the hard backstop).
+      const customer = data.customers.find((c) => c.id === input.customerId)
+      if (debt > 0 && customer?.debt_limit != null) {
+        const existingDebt = data.transactions
+          .filter((t) => t.customer_id === input.customerId)
+          .reduce((s, t) => s + toNumber(t.debt_amount), 0)
+        if (existingDebt + debt > toNumber(customer.debt_limit)) {
+          throw new Error(`تجاوز حد الدين المسموح للعميل (الحد ${toNumber(customer.debt_limit)} ر.س)`)
+        }
+      }
+
       if (isLocal) {
         const tx = await localRef.current!.createSale(input)
         await refresh()
         return tx
       }
-      const total = input.items.reduce((s, i) => s + i.quantity * i.unit_price, 0)
-      const paid = Math.min(input.paidAmount, total)
-      const debt = Math.max(0, total - paid)
       const status = debt === 0 ? 'paid' : paid === 0 ? 'debt' : 'partial'
 
       const { data: tx, error: txErr } = await supabase!
@@ -401,7 +436,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       await refresh()
       return tx as SalesTransaction
     },
-    [isLocal, refresh, user],
+    [data, isLocal, refresh, user],
   )
 
   const addInventoryRow = useCallback(
@@ -481,6 +516,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       addRep,
       addCustomer,
       updateCustomer,
+      deleteCustomer,
       createSale,
       addInventoryRow,
       updateInventory,
@@ -501,6 +537,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       addRep,
       addCustomer,
       updateCustomer,
+      deleteCustomer,
       createSale,
       addInventoryRow,
       updateInventory,

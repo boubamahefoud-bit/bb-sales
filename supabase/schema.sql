@@ -18,6 +18,7 @@ drop type if exists public.payment_status cascade;
 drop type if exists public.user_role cascade;
 drop trigger if exists on_auth_user_created on auth.users;
 drop trigger if exists trg_inventory_updated on public.trucks_inventory;
+drop trigger if exists trg_customer_debt_limit on public.sales_transactions;
 drop function if exists public.handle_new_user();
 drop function if exists public.set_updated_at();
 drop function if exists public.complete_manager_signup();
@@ -25,6 +26,7 @@ drop function if exists public.ensure_user_profile();
 drop function if exists public.create_sales_rep(text, text, text, text);
 drop function if exists public.current_store_id();
 drop function if exists public.is_manager();
+drop function if exists public.check_customer_debt_limit();
 
 -- ---------- ENUMS ----------
 create type public.user_role as enum ('manager', 'sales_rep');
@@ -79,6 +81,7 @@ create table public.customers (
   address           text,
   latitude          double precision,
   longitude         double precision,
+  debt_limit        numeric(12, 2) check (debt_limit is null or debt_limit >= 0),
   created_by_rep_id uuid not null references public.users (id) on delete cascade,
   created_at        timestamptz not null default now()
 );
@@ -201,11 +204,46 @@ create trigger trg_inventory_updated
   before update on public.trucks_inventory
   for each row execute procedure public.set_updated_at();
 
+-- Enforce per-customer debt limits at the database level: blocks any new
+-- transaction whose debt would push the customer past their debt_limit.
+create or replace function public.check_customer_debt_limit()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_limit numeric(12,2);
+  v_existing numeric(12,2);
+begin
+  if NEW.debt_amount > 0 then
+    select debt_limit into v_limit
+    from public.customers
+    where id = NEW.customer_id;
+    if v_limit is not null then
+      select coalesce(sum(debt_amount), 0) into v_existing
+      from public.sales_transactions
+      where customer_id = NEW.customer_id;
+      if (coalesce(v_existing, 0) + NEW.debt_amount) > v_limit then
+        raise exception 'تجاوز حد الدين المسموح للعميل (الحد %)', v_limit;
+      end if;
+    end if;
+  end if;
+  return NEW;
+end;
+$$;
+
+drop trigger if exists trg_customer_debt_limit on public.sales_transactions;
+create trigger trg_customer_debt_limit
+  before insert on public.sales_transactions
+  for each row execute procedure public.check_customer_debt_limit();
+
 -- ============================================================
 -- SECURITY DEFINER RPCs (bypass RLS internally)
 -- ============================================================
 
 -- Manager self-provisioning fallback (used if signup ran without metadata).
+-- Delegates to ensure_user_profile() so all provisioning paths stay in sync.
 create or replace function public.complete_manager_signup()
 returns uuid
 language plpgsql
@@ -213,28 +251,23 @@ security definer
 set search_path = public
 as $$
 declare
-  v_user auth.users%rowtype;
   v_store_id uuid;
 begin
-  select * into v_user from auth.users where id = auth.uid();
-  if not found then raise exception 'not authenticated'; end if;
-  if exists (select 1 from public.users where id = v_user.id and role = 'manager') then
-    select store_id into v_store_id from public.users where id = v_user.id;
-    return v_store_id;
-  end if;
-  insert into public.stores (name, owner_user_id)
-  values (coalesce(v_user.raw_user_meta_data ->> 'store_name', v_user.email), v_user.id)
-  returning id into v_store_id;
-  update public.users
-  set role = 'manager', store_id = v_store_id
-  where id = v_user.id;
+  perform public.ensure_user_profile();
+  select store_id into v_store_id from public.users where id = auth.uid();
+  if v_store_id is null then raise exception 'manager setup failed'; end if;
   return v_store_id;
 end;
 $$;
 
--- Auto-provision a profile row for the current user if none exists.
+-- Auto-provision (and self-repair) the profile row for the current user.
 -- Handles the case where the on_auth_user_created trigger did not fire
--- (e.g. schema applied after signup, or direct auth.users inserts).
+-- (e.g. schema applied after signup, or direct auth.users inserts), and
+-- upgrades stale rows so ANY store manager always has manager rights:
+--   - no row at all          -> create a profile (manager gets a store too)
+--   - manager metadata, but  -> repair: ensure role='manager' + store_id
+--     row missing/role wrong
+-- Never downgrades an existing manager.
 create or replace function public.ensure_user_profile()
 returns jsonb
 language plpgsql
@@ -244,31 +277,50 @@ as $$
 declare
   v_user    auth.users%rowtype;
   v_meta    jsonb;
+  v_role    text;
   v_profile public.users%rowtype;
   v_store_id uuid;
 begin
   select * into v_user from auth.users where id = auth.uid();
   if not found then raise exception 'not authenticated'; end if;
 
-  select * into v_profile from public.users where id = v_user.id;
-  if found then return to_jsonb(v_profile); end if;
-
   v_meta := coalesce(v_user.raw_user_meta_data, '{}'::jsonb);
+  v_role := coalesce(v_meta ->> 'role', 'sales_rep');
 
-  if coalesce(v_meta ->> 'role', '') = 'manager' then
-    insert into public.stores (name, owner_user_id)
-    values (coalesce(v_meta ->> 'store_name', v_user.email), v_user.id)
-    returning id into v_store_id;
-    insert into public.users (id, email, full_name, role, store_id)
-    values (
-      v_user.id,
-      coalesce(v_user.email, ''),
-      coalesce(v_meta ->> 'full_name', v_meta ->> 'store_name', ''),
-      'manager',
-      v_store_id
-    )
-    returning * into v_profile;
-  else
+  select * into v_profile from public.users where id = v_user.id;
+
+  if v_role = 'manager' then
+    if not found then
+      -- create the profile row FIRST (stores.owner_user_id FK requires it),
+      -- then the store, then upgrade the profile to manager.
+      insert into public.users (id, email, full_name, role)
+      values (
+        v_user.id,
+        coalesce(v_user.email, ''),
+        coalesce(v_meta ->> 'full_name', v_meta ->> 'store_name', ''),
+        'sales_rep'
+      );
+      insert into public.stores (name, owner_user_id)
+      values (coalesce(v_meta ->> 'store_name', v_user.email), v_user.id)
+      returning id into v_store_id;
+      update public.users
+      set role = 'manager', store_id = v_store_id
+      where id = v_user.id;
+      select * into v_profile from public.users where id = v_user.id;
+    elsif v_profile.role <> 'manager' or v_profile.store_id is null then
+      if v_profile.store_id is null then
+        insert into public.stores (name, owner_user_id)
+        values (coalesce(v_meta ->> 'store_name', v_user.email), v_user.id)
+        returning id into v_store_id;
+      else
+        v_store_id := v_profile.store_id;
+      end if;
+      update public.users
+      set role = 'manager', store_id = v_store_id
+      where id = v_user.id;
+      select * into v_profile from public.users where id = v_user.id;
+    end if;
+  elsif not found then
     insert into public.users (id, email, full_name, role)
     values (
       v_user.id,
@@ -285,6 +337,8 @@ $$;
 
 -- Managers provision reps. Creates the auth user + isolated profile
 -- with a unique rep_token used to build the exclusive access link.
+-- Self-heals the caller's profile first so ANY store manager account
+-- (even one with a stale/older profile row) can create sales reps.
 create or replace function public.create_sales_rep(
   p_full_name text,
   p_email     text,
@@ -302,6 +356,8 @@ declare
   v_new_id uuid := gen_random_uuid();
   v_token  uuid := gen_random_uuid();
 begin
+  perform public.ensure_user_profile();
+
   select store_id into v_manager_store
   from public.users
   where id = v_manager_id and role = 'manager';

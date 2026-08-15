@@ -37,6 +37,7 @@ export function customerDebts(data: DataSnapshot): CustomerDebt[] {
       phone: c.phone ?? null,
       created_by_rep_id: c.created_by_rep_id,
       total_debt: 0,
+      debt_limit: c.debt_limit ?? null,
       open_transactions: 0,
     })
   }

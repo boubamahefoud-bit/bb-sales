@@ -36,9 +36,16 @@ persistence, no demo accounts or fake figures) so the full flow can be previewed
    - Creates: `stores`, `users`, `trucks_inventory`, `customers`, `sales_transactions`,
      `transaction_items`, `rep_locations`, `daily_reconciliation`.
    - Row Level Security with strict rep isolation (validated).
-   - Security-definer RPCs: `complete_manager_signup()`, `create_sales_rep()`.
+   - Security-definer RPCs: `complete_manager_signup()`, `ensure_user_profile()`,
+     `create_sales_rep()`, `check_customer_debt_limit()`.
    - `product-images` storage bucket + public-read policies.
    - Realtime publication for live syncing.
+
+   > **Already using the app on an existing Supabase project?** Run only the additive
+   > `supabase/migration.sql` instead — it upgrades `customers` with `debt_limit`,
+   > makes `ensure_user_profile()` self-healing (fixes stale manager profiles that
+   > caused "Only managers can create sales reps"), and adds the debt-limit trigger.
+   > It is idempotent and contains no `DROP` statements, so it is safe to re-run.
 3. Copy `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` into `.env.local`.
 
 No seed data — the system starts fully empty (zero-state).

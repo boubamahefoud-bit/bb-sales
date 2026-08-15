@@ -210,7 +210,8 @@ export class LocalBackend {
       address: input.address ?? null,
       latitude: input.latitude ?? null,
       longitude: input.longitude ?? null,
-      created_by_rep_id: me.id,
+      debt_limit: input.debt_limit ?? null,
+      created_by_rep_id: input.created_by_rep_id ?? me.id,
       created_at: new Date().toISOString(),
     }
     this.commit((d) => d.customers.push(cust))
@@ -225,6 +226,13 @@ export class LocalBackend {
     })
   }
 
+  async deleteCustomer(id: string): Promise<void> {
+    await this.wait()
+    this.commit((d) => {
+      d.customers = d.customers.filter((x) => x.id !== id)
+    })
+  }
+
   async createSale(input: {
     customerId: string
     paidAmount: number
@@ -236,6 +244,15 @@ export class LocalBackend {
     const total = input.items.reduce((s, i) => s + i.quantity * i.unit_price, 0)
     const paid = Math.min(input.paidAmount, total)
     const debt = Math.max(0, total - paid)
+    const customer = this.db.customers.find((c) => c.id === input.customerId)
+    if (debt > 0 && customer?.debt_limit != null) {
+      const existingDebt = this.db.transactions
+        .filter((t) => t.customer_id === input.customerId)
+        .reduce((s, t) => s + t.debt_amount, 0)
+      if (existingDebt + debt > customer.debt_limit) {
+        throw new Error(`تجاوز حد الدين المسموح للعميل (الحد ${customer.debt_limit} ر.س)`)
+      }
+    }
     const status: SalesTransaction['payment_status'] = debt === 0 ? 'paid' : paid === 0 ? 'debt' : 'partial'
     const tx: SalesTransaction = {
       id: crypto.randomUUID(),

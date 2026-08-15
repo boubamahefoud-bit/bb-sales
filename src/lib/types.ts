@@ -42,6 +42,7 @@ export interface Customer {
   address?: string | null
   latitude?: number | null
   longitude?: number | null
+  debt_limit?: number | null
   created_by_rep_id: string
   created_at: string
 }
@@ -101,6 +102,7 @@ export interface CustomerDebt {
   phone?: string | null
   created_by_rep_id: string
   total_debt: number
+  debt_limit?: number | null
   open_transactions: number
   last_transaction_at?: string | null
 }
@@ -109,10 +111,13 @@ export interface CustomerDebt {
 
 export interface NewCustomerInput {
   name: string
-  phone?: string
-  address?: string
+  phone?: string | null
+  address?: string | null
   latitude?: number | null
   longitude?: number | null
+  debt_limit?: number | null
+  /** Managers may assign the customer to a specific rep; reps default to themselves. */
+  created_by_rep_id?: string
 }
 
 export interface NewTransactionInput {

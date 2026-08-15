@@ -42,6 +42,12 @@ export default function RepSale() {
     [data.customers, user?.id],
   )
 
+  const custDebtMap = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const t of data.transactions) m.set(t.customer_id, (m.get(t.customer_id) ?? 0) + Number(t.debt_amount || 0))
+    return m
+  }, [data.transactions])
+
   const [customer, setCustomer] = useState<Customer | null>(null)
   const [showCustomerPicker, setShowCustomerPicker] = useState(false)
   const [custQuery, setCustQuery] = useState('')
@@ -59,6 +65,21 @@ export default function RepSale() {
   }, [paidInput, total])
 
   const debt = Math.max(0, total - paid)
+
+  const currentDebt = useMemo(
+    () =>
+      customer
+        ? data.transactions.filter((t) => t.customer_id === customer.id).reduce((s, t) => s + Number(t.debt_amount || 0), 0)
+        : 0,
+    [customer, data.transactions],
+  )
+
+  const limitInfo = useMemo(() => {
+    if (!customer || customer.debt_limit == null) return null
+    const limit = Number(customer.debt_limit)
+    const projected = currentDebt + debt
+    return { limit, current: currentDebt, projected, remaining: Math.max(0, limit - projected), over: projected > limit }
+  }, [customer, currentDebt, debt])
 
   function addToCart(product: (typeof stock)[number]) {
     setCart((c) => {
@@ -105,7 +126,7 @@ export default function RepSale() {
     return myCustomers.filter((c) => c.name.includes(q) || (c.phone ?? '').includes(q))
   }, [myCustomers, custQuery])
 
-  const canSubmit = !!customer && cart.length > 0 && total > 0 && !busy
+  const canSubmit = !!customer && cart.length > 0 && total > 0 && !busy && !limitInfo?.over
 
   async function handleSubmit() {
     if (!customer) return
@@ -317,6 +338,23 @@ export default function RepSale() {
             <span className="text-muted-foreground">المتبقي كدين</span>
             {debt > 0 ? <Money value={debt} className="font-bold text-destructive" /> : <span className="badge-accent">—</span>}
           </div>
+          {limitInfo && (
+            <div
+              className={`rounded-lg px-3 py-2.5 text-xs font-bold leading-relaxed ${
+                limitInfo.over ? 'bg-destructive/10 text-destructive' : 'bg-info/10 text-info'
+              }`}
+            >
+              حد الدين: <span className="tnum" dir="ltr">{limitInfo.limit.toFixed(2)} ر.س</span>
+              {' · '}الدين الحالي: <span className="tnum" dir="ltr">{limitInfo.current.toFixed(2)}</span>
+              {limitInfo.over ? (
+                <span className="block mt-1">تجاوز حد الدين — لا يمكن إصدار الفاتورة بهذا المبلغ الآجل.</span>
+              ) : (
+                <>
+                  {' · '}المتبقي من الحد: <span className="tnum" dir="ltr">{limitInfo.remaining.toFixed(2)}</span>
+                </>
+              )}
+            </div>
+          )}
         </div>
 
         <button onClick={handleSubmit} disabled={!canSubmit} className="btn-accent btn-lg w-full">
@@ -354,6 +392,16 @@ export default function RepSale() {
                   <span className="flex-1">
                     <span className="block font-bold">{c.name}</span>
                     <span className="block text-xs text-muted-foreground" dir="ltr">{c.phone ?? '—'}</span>
+                    {(custDebtMap.get(c.id) ?? 0) > 0 && (
+                      <span className="block text-[11px] font-bold text-destructive mt-0.5">
+                        دين حالي: <Money value={custDebtMap.get(c.id) ?? 0} />
+                        {c.debt_limit != null && (
+                          <span className="text-muted-foreground">
+                            {' '}· حد <span dir="ltr">{Number(c.debt_limit).toFixed(0)}</span>
+                          </span>
+                        )}
+                      </span>
+                    )}
                   </span>
                 </button>
               ))
