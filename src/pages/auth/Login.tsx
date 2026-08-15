@@ -1,12 +1,13 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate, Navigate } from 'react-router-dom'
 import { Truck, Eye, EyeOff, LogIn, UserPlus, Loader2 } from 'lucide-react'
 import { useStore } from '../../lib/store'
 import { useToast } from '../../components/ui'
+import { supabase } from '../../lib/supabase'
 import { ADMIN_DASHBOARD, repPortalPath } from '../../App'
 
 export default function Login() {
-  const { user, login } = useStore()
+  const { user, login, refresh } = useStore()
   const { show } = useToast()
   const navigate = useNavigate()
 
@@ -15,6 +16,31 @@ export default function Login() {
   const [showPw, setShowPw] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // After clicking the email-confirmation link, supabase-js processes the
+  // URL tokens asynchronously and fires SIGNED_IN. Re-run refresh whenever a
+  // session appears so the render-guard below redirects to the dashboard.
+  useEffect(() => {
+    if (!supabase) return
+    const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_IN' && session) refresh(session)
+      if (event === 'SIGNED_OUT') setError(null)
+    })
+    return () => sub.subscription.unsubscribe()
+  }, [refresh])
+
+  // On mount, pick up an already-existing session (e.g. a fresh page load
+  // while signed in, or a session established before this component mounted).
+  useEffect(() => {
+    if (!supabase) return
+    let cancelled = false
+    supabase.auth.getSession().then(({ data }) => {
+      if (!cancelled && data.session) refresh()
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [refresh])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -31,7 +57,12 @@ export default function Login() {
       return
     }
     show('success', 'تم تسجيل الدخول بنجاح')
-    navigate('/', { replace: true })
+    if (res.user) {
+      const to = res.user.role === 'manager' ? ADMIN_DASHBOARD : repPortalPath(res.user.rep_token)
+      navigate(to, { replace: true })
+    } else {
+      navigate('/', { replace: true })
+    }
   }
 
   if (user) {

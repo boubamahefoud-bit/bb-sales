@@ -16,9 +16,12 @@ drop table if exists public.stores cascade;
 drop table if exists public.users cascade;
 drop type if exists public.payment_status cascade;
 drop type if exists public.user_role cascade;
+drop trigger if exists on_auth_user_created on auth.users;
+drop trigger if exists trg_inventory_updated on public.trucks_inventory;
 drop function if exists public.handle_new_user();
 drop function if exists public.set_updated_at();
 drop function if exists public.complete_manager_signup();
+drop function if exists public.ensure_user_profile();
 drop function if exists public.create_sales_rep(text, text, text, text);
 drop function if exists public.current_store_id();
 drop function if exists public.is_manager();
@@ -226,6 +229,57 @@ begin
   set role = 'manager', store_id = v_store_id
   where id = v_user.id;
   return v_store_id;
+end;
+$$;
+
+-- Auto-provision a profile row for the current user if none exists.
+-- Handles the case where the on_auth_user_created trigger did not fire
+-- (e.g. schema applied after signup, or direct auth.users inserts).
+create or replace function public.ensure_user_profile()
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_user    auth.users%rowtype;
+  v_meta    jsonb;
+  v_profile public.users%rowtype;
+  v_store_id uuid;
+begin
+  select * into v_user from auth.users where id = auth.uid();
+  if not found then raise exception 'not authenticated'; end if;
+
+  select * into v_profile from public.users where id = v_user.id;
+  if found then return to_jsonb(v_profile); end if;
+
+  v_meta := coalesce(v_user.raw_user_meta_data, '{}'::jsonb);
+
+  if coalesce(v_meta ->> 'role', '') = 'manager' then
+    insert into public.stores (name, owner_user_id)
+    values (coalesce(v_meta ->> 'store_name', v_user.email), v_user.id)
+    returning id into v_store_id;
+    insert into public.users (id, email, full_name, role, store_id)
+    values (
+      v_user.id,
+      coalesce(v_user.email, ''),
+      coalesce(v_meta ->> 'full_name', v_meta ->> 'store_name', ''),
+      'manager',
+      v_store_id
+    )
+    returning * into v_profile;
+  else
+    insert into public.users (id, email, full_name, role)
+    values (
+      v_user.id,
+      coalesce(v_user.email, ''),
+      coalesce(v_meta ->> 'full_name', ''),
+      'sales_rep'
+    )
+    returning * into v_profile;
+  end if;
+
+  return to_jsonb(v_profile);
 end;
 $$;
 
@@ -477,36 +531,50 @@ create policy "recon_update"
 
 -- ============================================================
 -- STORAGE: product images bucket (public read, app-upload)
+-- Only applies on Supabase (storage schema present); skipped on
+-- a bare local Postgres so the file remains fully portable.
 -- ============================================================
-insert into storage.buckets (id, name, public)
-values ('product-images', 'product-images', true)
-on conflict (id) do nothing;
+do $$
+begin
+  if exists (select 1 from pg_catalog.pg_namespace where nspname = 'storage') then
+    insert into storage.buckets (id, name, public)
+    values ('product-images', 'product-images', true)
+    on conflict (id) do nothing;
 
-drop policy if exists product_images_public_read on storage.objects;
-drop policy if exists product_images_app_insert on storage.objects;
-drop policy if exists product_images_app_update on storage.objects;
-drop policy if exists product_images_app_delete on storage.objects;
+    drop policy if exists product_images_public_read on storage.objects;
+    drop policy if exists product_images_app_insert on storage.objects;
+    drop policy if exists product_images_app_update on storage.objects;
+    drop policy if exists product_images_app_delete on storage.objects;
 
-create policy "product_images_public_read"
-  on storage.objects for select
-  using (bucket_id = 'product-images');
+    create policy "product_images_public_read"
+      on storage.objects for select
+      using (bucket_id = 'product-images');
 
-create policy "product_images_app_insert"
-  on storage.objects for insert
-  with check (bucket_id = 'product-images' and auth.role() = 'authenticated');
+    create policy "product_images_app_insert"
+      on storage.objects for insert
+      with check (bucket_id = 'product-images' and auth.role() = 'authenticated');
 
-create policy "product_images_app_update"
-  on storage.objects for update
-  using (bucket_id = 'product-images' and auth.role() = 'authenticated');
+    create policy "product_images_app_update"
+      on storage.objects for update
+      using (bucket_id = 'product-images' and auth.role() = 'authenticated');
 
-create policy "product_images_app_delete"
-  on storage.objects for delete
-  using (bucket_id = 'product-images' and auth.role() = 'authenticated');
+    create policy "product_images_app_delete"
+      on storage.objects for delete
+      using (bucket_id = 'product-images' and auth.role() = 'authenticated');
+  end if;
+end
+$$;
 
 -- ============================================================
 -- REALTIME: live sync for manager dashboard
 -- ============================================================
-alter publication supabase_realtime add table public.sales_transactions;
-alter publication supabase_realtime add table public.customers;
-alter publication supabase_realtime add table public.rep_locations;
-alter publication supabase_realtime add table public.trucks_inventory;
+do $$
+begin
+  if exists (select 1 from pg_catalog.pg_namespace where nspname = 'supabase_realtime') then
+    alter publication supabase_realtime add table public.sales_transactions;
+    alter publication supabase_realtime add table public.customers;
+    alter publication supabase_realtime add table public.rep_locations;
+    alter publication supabase_realtime add table public.trucks_inventory;
+  end if;
+end
+$$;

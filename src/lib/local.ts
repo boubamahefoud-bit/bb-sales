@@ -115,6 +115,7 @@ export class LocalBackend {
       role: 'manager',
       full_name: input.store_name.trim(),
       store_id: store.id,
+      password: input.password,
       created_at: new Date().toISOString(),
     }
     this.commit((d) => {

@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from 'react'
 import { supabase, isSupabaseConfigured } from './supabase'
+import type { Session } from '@supabase/supabase-js'
 import { LocalBackend } from './local'
 import { compressImage } from './image'
 import type {
@@ -29,10 +30,10 @@ interface StoreCtx {
   user: UserProfile | null
   store: Store | null
   data: DataSnapshot
-  login: (email: string, password: string) => Promise<{ error?: string; needsEmailConfirm?: boolean }>
+  login: (email: string, password: string) => Promise<{ error?: string; user?: UserProfile }>
   signUpManager: (input: { store_name: string; email: string; password: string }) => Promise<{ error?: string; needsEmailConfirm?: boolean }>
   logout: () => Promise<void>
-  refresh: () => Promise<void>
+  refresh: (session?: Session | null) => Promise<UserProfile | null>
   addRep: (input: { full_name: string; email: string; password: string; truck_id: string }) => Promise<{ rep: UserProfile; accessLink: string }>
   addCustomer: (input: NewCustomerInput) => Promise<Customer>
   updateCustomer: (id: string, patch: Partial<Customer>) => Promise<void>
@@ -72,9 +73,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const isLocal = !isSupabaseConfigured
 
-  const fetchSupabase = useCallback(async (): Promise<{ u: UserProfile | null; d: DataSnapshot }> => {
-    const { data: sessionData } = await supabase!.auth.getSession()
-    const authUser = sessionData.session?.user ?? null
+  const fetchSupabase = useCallback(async (session?: Session | null): Promise<{ u: UserProfile | null; d: DataSnapshot }> => {
+    const authUser = session?.user ?? (await supabase!.auth.getSession()).data.session?.user ?? null
 
     let profile: UserProfile | null = null
     if (authUser) {
@@ -83,7 +83,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         .select('*')
         .eq('id', authUser.id)
         .maybeSingle()
-      if (p) profile = p as UserProfile
+      if (p) {
+        profile = p as UserProfile
+      } else {
+        // New user (or the trigger didn't run): auto-create a default profile
+        // row via the security-definer RPC, then read it back.
+        const { data: ensured } = await supabase!.rpc('ensure_user_profile')
+        if (ensured) {
+          const { data: p2 } = await supabase!
+            .from('users')
+            .select('*')
+            .eq('id', authUser.id)
+            .maybeSingle()
+          profile = (p2 as UserProfile) ?? (ensured as unknown as UserProfile)
+        }
+      }
     }
 
     const d = { ...emptyData }
@@ -108,7 +122,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return { u: profile, d }
   }, [])
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (session?: Session | null): Promise<UserProfile | null> => {
     if (isLocal) {
       const local = localRef.current!
       const u = local.getSession()
@@ -117,19 +131,37 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setStore(u?.store_id ? d.stores.find((s) => s.id === u.store_id) ?? null : null)
       setData(d)
       setInitialized(true)
-      return
+      return u
     }
-    const { u, d } = await fetchSupabase()
+    const { u, d } = await fetchSupabase(session)
     setUser(u)
     setStore(u?.store_id ? d.stores.find((s) => s.id === u.store_id) ?? null : null)
     setData(d)
     setInitialized(true)
+    return u
   }, [fetchSupabase, isLocal])
 
   useEffect(() => {
     refresh().catch(() => setInitialized(true))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refresh, isLocal])
+
+  // Live auth-state sync (Supabase only): when a session appears — e.g. after
+  // the email-confirmation link redirects back to the app — load the profile
+  // so guards/redirects send the user to the right dashboard.
+  useEffect(() => {
+    if (isLocal || !supabase) return
+    const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+        if (session) refresh(session)
+      } else if (event === 'SIGNED_OUT') {
+        setUser(null)
+        setStore(null)
+        setData(emptyData)
+      }
+    })
+    return () => sub.subscription.unsubscribe()
+  }, [isLocal, refresh])
 
   // Realtime sync (Supabase only): live-update when reps create
   // transactions, customers, locations or the manager changes stock.
@@ -172,13 +204,33 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         if (isLocal) {
           const { user: u, error: err } = await localRef.current!.signIn(email, password)
           if (err || !u) return { error: err ?? 'تعذر تسجيل الدخول' }
-          await refresh()
-          return {}
+          const profile = await refresh()
+          return { user: profile ?? u }
         }
         const { error: authErr } = await supabase!.auth.signInWithPassword({ email, password })
         if (authErr) return { error: 'بيانات الدخول غير صحيحة' }
-        await refresh()
-        return {}
+        let profile = await refresh()
+        if (!profile) {
+          // Last-resort fallback: build a minimal profile from the auth user
+          // metadata so the redirect still happens. The dashboard can always
+          // re-run ensure_user_profile on first load.
+          const { data: sessionData } = await supabase!.auth.getSession()
+          const au = sessionData.session?.user
+          if (au) {
+            const meta = (au.user_metadata ?? {}) as Record<string, unknown>
+            profile = {
+              id: au.id,
+              email: au.email ?? '',
+              role: meta.role === 'manager' ? 'manager' : 'sales_rep',
+              full_name: typeof meta.full_name === 'string' ? meta.full_name : '',
+              store_id: null,
+              created_at: au.created_at,
+            } as UserProfile
+            setUser(profile)
+          }
+        }
+        if (!profile) return { error: 'تعذر تحميل الملف الشخصي' }
+        return { user: profile }
       } finally {
         setLoading(false)
         setInitialized(true)
