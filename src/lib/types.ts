@@ -87,6 +87,17 @@ export interface DataSnapshot {
   repLocations: RepLocation[]
 }
 
+/** Shape returned by the `rep_session` RPC (unique-link auth). */
+export interface RepSessionResult {
+  profile: UserProfile
+  store: Store | null
+  inventory: TruckInventoryItem[]
+  customers: Customer[]
+  transactions: SalesTransaction[]
+  items: TransactionItem[]
+  repLocations: RepLocation[]
+}
+
 /* ---------- Joined / computed shapes ---------- */
 
 export interface TransactionWithItems extends SalesTransaction {

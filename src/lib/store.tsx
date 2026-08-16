@@ -16,6 +16,7 @@ import type {
   Customer,
   DataSnapshot,
   NewCustomerInput,
+  RepSessionResult,
   SalesTransaction,
   Store,
   TruckInventoryItem,
@@ -34,6 +35,8 @@ interface StoreCtx {
   signUpManager: (input: { store_name: string; email: string; password: string }) => Promise<{ error?: string; needsEmailConfirm?: boolean }>
   logout: () => Promise<void>
   refresh: (session?: Session | null) => Promise<UserProfile | null>
+  repToken: string | null
+  enterRepPortal: (token: string) => Promise<{ error?: string; user?: UserProfile }>
   addRep: (input: { full_name: string; email: string; password: string; truck_id: string }) => Promise<{ rep: UserProfile; accessLink: string }>
   addCustomer: (input: NewCustomerInput) => Promise<Customer>
   updateCustomer: (id: string, patch: Partial<Customer>) => Promise<void>
@@ -71,8 +74,37 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<UserProfile | null>(null)
   const [store, setStore] = useState<Store | null>(null)
   const [data, setData] = useState<DataSnapshot>(emptyData)
+  const [repToken, setRepToken] = useState<string | null>(null)
 
   const isLocal = !isSupabaseConfigured
+
+  /** Loads a rep's full snapshot using their unique link token as the credential. */
+  const fetchRepPortal = useCallback(
+    async (token: string): Promise<{ u: UserProfile | null; d: DataSnapshot }> => {
+      if (isLocal) {
+        const local = localRef.current!
+        const { user: u, error: err } = await local.signInByToken(token)
+        if (err || !u) return { u: null, d: emptyData }
+        const d = await local.fetchAll()
+        return { u, d }
+      }
+      const { data, error: e } = await supabase!.rpc('rep_session', { p_token: token })
+      if (e || !data) return { u: null, d: emptyData }
+      const s = data as RepSessionResult
+      const u = s.profile
+      const d: DataSnapshot = {
+        stores: s.store ? [s.store] : [],
+        users: u ? [u] : [],
+        inventory: s.inventory ?? [],
+        customers: s.customers ?? [],
+        transactions: s.transactions ?? [],
+        items: s.items ?? [],
+        repLocations: s.repLocations ?? [],
+      }
+      return { u, d }
+    },
+    [isLocal],
+  )
 
   const fetchSupabase = useCallback(async (session?: Session | null): Promise<{ u: UserProfile | null; d: DataSnapshot }> => {
     const authUser = session?.user ?? (await supabase!.auth.getSession()).data.session?.user ?? null
@@ -128,18 +160,37 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setInitialized(true)
       return u
     }
+    if (repToken) {
+      // Rep portal unique-link mode: the token (not a session) is the credential.
+      const { u, d } = await fetchRepPortal(repToken)
+      setUser(u)
+      setStore(u?.store_id ? d.stores.find((s) => s.id === u.store_id) ?? null : null)
+      setData(d)
+      setInitialized(true)
+      return u
+    }
     const { u, d } = await fetchSupabase(session)
     setUser(u)
     setStore(u?.store_id ? d.stores.find((s) => s.id === u.store_id) ?? null : null)
     setData(d)
     setInitialized(true)
     return u
-  }, [fetchSupabase, isLocal])
+  }, [fetchSupabase, fetchRepPortal, isLocal, repToken])
 
   useEffect(() => {
     refresh().catch(() => setInitialized(true))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refresh, isLocal])
+
+  // Token-mode polling: no realtime channel exists without an auth session, so
+  // keep the rep's snapshot fresh by re-fetching the rep_session RPC.
+  useEffect(() => {
+    if (isLocal || !repToken) return
+    const id = window.setInterval(() => {
+      refresh().catch(() => {})
+    }, 20000)
+    return () => window.clearInterval(id)
+  }, [isLocal, repToken, refresh])
 
   // Live auth-state sync (Supabase only): when a session appears — e.g. after
   // the email-confirmation link redirects back to the app — load the profile
@@ -150,18 +201,23 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
         if (session) refresh(session)
       } else if (event === 'SIGNED_OUT') {
+        // Ignore the session wipe when we deliberately sign out on entering a
+        // rep unique link (enterRepPortal loads the rep via the token instead).
+        if (repToken) return
         setUser(null)
         setStore(null)
         setData(emptyData)
       }
     })
     return () => sub.subscription.unsubscribe()
-  }, [isLocal, refresh])
+  }, [isLocal, refresh, repToken])
 
   // Realtime sync (Supabase only): live-update when reps create
   // transactions, customers, locations or the manager changes stock.
+  // Skipped in rep unique-link (token) mode because there is no auth session;
+  // token mode refreshes via polling instead.
   useEffect(() => {
-    if (isLocal || !user?.store_id) return
+    if (isLocal || !user?.store_id || repToken) return
     const storeId = user.store_id
     const sub = supabase!
       .channel(`bb-live-${storeId}`)
@@ -189,7 +245,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return () => {
       supabase!.removeChannel(sub)
     }
-  }, [isLocal, user?.store_id, refresh])
+  }, [isLocal, user?.store_id, refresh, repToken])
 
   const login = useCallback(
     async (email: string, password: string) => {
@@ -270,6 +326,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   )
 
   const logout = useCallback(async () => {
+    setRepToken(null)
     if (isLocal) {
       await localRef.current!.signOut()
     } else {
@@ -279,6 +336,48 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setStore(null)
     setData(emptyData)
   }, [isLocal])
+
+  /**
+   * Rep unique-link auth: /rep-portal/:token. The token itself is the
+   * credential — no email/password session. Any active session (e.g. a
+   * manager logged into this tab) is signed out so the link renders the
+   * standalone Sales Rep Interface and NEVER redirects to /admin/dashboard.
+   */
+  const enterRepPortal = useCallback(
+    async (token: string): Promise<{ error?: string; user?: UserProfile }> => {
+      setLoading(true)
+      setError(null)
+      try {
+        if (isLocal) {
+          const { user: u, error: err } = await localRef.current!.signInByToken(token)
+          if (err || !u) return { error: err ?? 'رابط الدخول غير صالح أو منتهي' }
+          setRepToken(token)
+          const d = await localRef.current!.fetchAll()
+          setUser(u)
+          setStore(u.store_id ? d.stores.find((s) => s.id === u.store_id) ?? null : null)
+          setData(d)
+          setInitialized(true)
+          return { user: u }
+        }
+        // Bypass/clear any active Manager session on this tab first.
+        await supabase!.auth.signOut().catch(() => {})
+        setRepToken(token)
+        const { u, d } = await fetchRepPortal(token)
+        if (!u) {
+          setRepToken(null)
+          return { error: 'رابط الدخول غير صالح أو منتهي' }
+        }
+        setUser(u)
+        setStore(u.store_id ? d.stores.find((s) => s.id === u.store_id) ?? null : null)
+        setData(d)
+        setInitialized(true)
+        return { user: u }
+      } finally {
+        setLoading(false)
+      }
+    },
+    [fetchRepPortal, isLocal],
+  )
 
   const addRep = useCallback(
     async (input: { full_name: string; email: string; password: string; truck_id: string }) => {
@@ -313,6 +412,20 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const addCustomer = useCallback(
     async (input: NewCustomerInput) => {
+      if (repToken) {
+        const { data, error: e } = await supabase!.rpc('rep_add_customer', {
+          p_token: repToken,
+          p_name: input.name,
+          p_phone: input.phone ?? null,
+          p_address: input.address ?? null,
+          p_latitude: input.latitude ?? null,
+          p_longitude: input.longitude ?? null,
+          p_debt_limit: input.debt_limit ?? null,
+        })
+        if (e) throw e
+        await refresh()
+        return data as Customer
+      }
       if (!user) throw new Error('unauthorized')
       if (isLocal) return localRef.current!.addCustomer(input)
       const { data, error: e } = await supabase!
@@ -333,12 +446,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       await refresh()
       return data as Customer
     },
-    [isLocal, refresh, user],
+    [isLocal, refresh, repToken, user],
   )
 
   const updateCustomer = useCallback(
     async (id: string, patch: Partial<Customer>) => {
-      if (isLocal) {
+      if (repToken) {
+        const { error: e } = await supabase!.rpc('rep_update_customer', {
+          p_token: repToken,
+          p_customer_id: id,
+          p_patch: patch,
+        })
+        if (e) throw e
+      } else if (isLocal) {
         await localRef.current!.updateCustomer(id, patch)
       } else {
         const { error: e } = await supabase!.from('customers').update(patch).eq('id', id)
@@ -346,12 +466,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
       await refresh()
     },
-    [isLocal, refresh],
+    [isLocal, refresh, repToken],
   )
 
   const deleteCustomer = useCallback(
     async (id: string) => {
-      if (isLocal) {
+      if (repToken) {
+        const { error: e } = await supabase!.rpc('rep_delete_customer', {
+          p_token: repToken,
+          p_customer_id: id,
+        })
+        if (e) throw e
+      } else if (isLocal) {
         await localRef.current!.deleteCustomer(id)
       } else {
         const { error: e } = await supabase!.from('customers').delete().eq('id', id)
@@ -359,7 +485,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
       await refresh()
     },
-    [isLocal, refresh],
+    [isLocal, refresh, repToken],
   )
 
   const createSale = useCallback(
@@ -386,6 +512,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         return tx
       }
       const status = debt === 0 ? 'paid' : paid === 0 ? 'debt' : 'partial'
+
+      if (repToken) {
+        const { data: tx, error: e } = await supabase!.rpc('rep_create_sale', {
+          p_token: repToken,
+          p_customer_id: input.customerId,
+          p_paid_amount: paid,
+          p_items: input.items,
+        })
+        if (e) throw e
+        await refresh()
+        return tx as SalesTransaction
+      }
 
       const { data: tx, error: txErr } = await supabase!
         .from('sales_transactions')
@@ -430,12 +568,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       await refresh()
       return tx as SalesTransaction
     },
-    [data, isLocal, refresh, user],
+    [data, isLocal, refresh, repToken, user],
   )
 
   const addInventoryRow = useCallback(
     async (input: Omit<TruckInventoryItem, 'id' | 'updated_at'>) => {
-      if (isLocal) {
+      if (repToken) {
+        const { error: e } = await supabase!.rpc('rep_add_inventory', {
+          p_token: repToken,
+          p_product_name: input.product_name,
+          p_product_image_url: input.product_image_url ?? null,
+          p_quantity_loaded: input.quantity_loaded,
+          p_unit_price: input.unit_price,
+        })
+        if (e) throw e
+      } else if (isLocal) {
         await localRef.current!.addInventoryRow(input)
       } else {
         const { error: e } = await supabase!.from('trucks_inventory').insert(input)
@@ -443,12 +590,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
       await refresh()
     },
-    [isLocal, refresh],
+    [isLocal, refresh, repToken],
   )
 
   const updateInventory = useCallback(
     async (id: string, patch: Partial<TruckInventoryItem>) => {
-      if (isLocal) {
+      if (repToken) {
+        const { error: e } = await supabase!.rpc('rep_update_inventory', {
+          p_token: repToken,
+          p_item_id: id,
+          p_patch: patch,
+        })
+        if (e) throw e
+      } else if (isLocal) {
         await localRef.current!.updateInventory(id, patch)
       } else {
         const { error: e } = await supabase!.from('trucks_inventory').update(patch).eq('id', id)
@@ -456,7 +610,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
       await refresh()
     },
-    [isLocal, refresh],
+    [isLocal, refresh, repToken],
   )
 
   const uploadProductImage = useCallback(
@@ -464,6 +618,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const compressed = await compressImage(file)
       if (isLocal) {
         return compressed.dataUrl
+      }
+      // Rep unique-link mode: no session, so upload into a folder named by the
+      // secret rep_token (the anon storage policy only allows such paths).
+      if (repToken) {
+        const path = `${repToken}/${crypto.randomUUID()}.jpg`
+        const { error: upErr } = await supabase!.storage
+          .from('product-images')
+          .upload(path, compressed.blob, { contentType: 'image/jpeg', upsert: true })
+        if (upErr) throw upErr
+        const { data } = supabase!.storage.from('product-images').getPublicUrl(path)
+        return data.publicUrl
       }
       if (!user) throw new Error('unauthorized')
       const path = `${user.store_id}/${user.id}/${crypto.randomUUID()}.jpg`
@@ -474,11 +639,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const { data } = supabase!.storage.from('product-images').getPublicUrl(path)
       return data.publicUrl
     },
-    [isLocal, user],
+    [isLocal, repToken, user],
   )
 
   const addRepLocation = useCallback(
     async (latitude: number, longitude: number) => {
+      if (repToken) {
+        await supabase!.rpc('rep_add_location', { p_token: repToken, p_latitude: latitude, p_longitude: longitude })
+        return
+      }
       if (!user || user.role !== 'sales_rep') return
       if (isLocal) {
         await localRef.current!.addRepLocation(latitude, longitude)
@@ -491,7 +660,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         longitude,
       })
     },
-    [isLocal, user],
+    [isLocal, repToken, user],
   )
 
   const value = useMemo<StoreCtx>(
@@ -507,6 +676,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       signUpManager,
       logout,
       refresh,
+      repToken,
+      enterRepPortal,
       addRep,
       addCustomer,
       updateCustomer,
@@ -528,6 +699,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       signUpManager,
       logout,
       refresh,
+      repToken,
+      enterRepPortal,
       addRep,
       addCustomer,
       updateCustomer,

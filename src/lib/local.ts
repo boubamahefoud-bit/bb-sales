@@ -134,6 +134,15 @@ export class LocalBackend {
     return { user: u }
   }
 
+  /** Unique-link auth: the rep_token itself is the credential (no password). */
+  async signInByToken(token: string): Promise<{ user: UserProfile | null; error?: string }> {
+    await this.wait()
+    const u = this.db.users.find((x) => x.role === 'sales_rep' && x.rep_token === token)
+    if (!u) return { user: null, error: 'رابط الدخول غير صالح أو منتهي' }
+    window.localStorage.setItem(SESSION_KEY, u.id)
+    return { user: u }
+  }
+
   async signOut(): Promise<void> {
     window.localStorage.removeItem(SESSION_KEY)
   }

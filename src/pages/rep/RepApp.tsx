@@ -19,13 +19,13 @@ import RepInventory from './RepInventory'
 import RepCustomers from './RepCustomers'
 import RepSale from './RepSale'
 
-type Tab = 'financials' | 'inventory' | 'customers' | 'sale'
+type Tab = 'sale' | 'inventory' | 'customers' | 'financials'
 
 const TABS: { id: Tab; label: string; icon: typeof Wallet }[] = [
-  { id: 'financials', label: 'المالية', icon: Wallet },
-  { id: 'inventory', label: 'المخزون', icon: Boxes },
-  { id: 'customers', label: 'العملاء', icon: Users },
-  { id: 'sale', label: 'فاتورة', icon: Receipt },
+  { id: 'sale', label: 'المنتجات والبيع', icon: Receipt },
+  { id: 'inventory', label: 'المخزون المتوفر بالشاحنة', icon: Boxes },
+  { id: 'customers', label: 'مواقع العملاء والعمليات', icon: Users },
+  { id: 'financials', label: 'الفواتير والديون المستحقة', icon: Wallet },
 ]
 
 export default function RepApp() {
@@ -33,7 +33,7 @@ export default function RepApp() {
   const { theme, toggle } = useTheme()
   const { show } = useToast()
   const navigate = useNavigate()
-  const [tab, setTab] = useState<Tab>('financials')
+  const [tab, setTab] = useState<Tab>('sale')
 
   async function handleLogout() {
     await logout()
@@ -72,10 +72,10 @@ export default function RepApp() {
       </header>
 
       <main className="mx-auto max-w-3xl px-4 py-5">
-        {tab === 'financials' && <RepFinancials />}
+        {tab === 'sale' && <RepSale />}
         {tab === 'inventory' && <RepInventory />}
         {tab === 'customers' && <RepCustomers />}
-        {tab === 'sale' && <RepSale />}
+        {tab === 'financials' && <RepFinancials />}
       </main>
 
       <nav

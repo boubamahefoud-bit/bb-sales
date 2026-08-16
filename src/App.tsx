@@ -1,5 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate, useParams } from 'react-router-dom'
-import type { ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { ThemeProvider } from './lib/theme'
 import { StoreProvider, useStore } from './lib/store'
 import { ToastProvider } from './components/ui'
@@ -7,7 +7,7 @@ import Login from './pages/auth/Login'
 import Signup from './pages/auth/Signup'
 import RepApp from './pages/rep/RepApp'
 import ManagerApp from './pages/manager/ManagerApp'
-import { Truck } from 'lucide-react'
+import { Truck, Link2Off } from 'lucide-react'
 import type { UserProfile } from './lib/types'
 
 export const REP_PORTAL_BASE = '/rep-portal'
@@ -52,18 +52,50 @@ function ManagerRoute({ children }: { children: ReactNode }) {
   return <>{children}</>
 }
 
-function RepRoute({ children }: { children: ReactNode }) {
+/**
+ * Rep unique-link portal: /rep-portal/:token.
+ * The token in the URL IS the credential. On entry any active session on this
+ * tab (e.g. a manager) is signed out and the rep is loaded via the token. The
+ * standalone Sales Rep Interface renders here — it NEVER redirects to
+ * /admin/dashboard. An invalid/expired link shows a friendly error screen.
+ */
+function RepPortalRoute({ children }: { children: ReactNode }) {
   const { token } = useParams()
-  const { user, initialized } = useStore()
-  if (!initialized) return <Splash />
-  if (!user) return <Navigate to="/login" replace />
-  // A manager must never view the rep-only portal.
-  if (user.role !== 'sales_rep') return <Navigate to={ADMIN_DASHBOARD} replace />
-  // A rep can only use their own unique link; a mismatched/empty token is
-  // redirected to their own portal (never into an infinite loop).
-  if (!user.rep_token) return <Navigate to="/login" replace />
-  if (token && token !== user.rep_token) return <Navigate to={repPortalPath(user.rep_token)} replace />
+  const { repToken, enterRepPortal } = useStore()
+  const [portalError, setPortalError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!token) return
+    setPortalError(null)
+    enterRepPortal(token).then((res) => {
+      if (res.error) setPortalError(res.error)
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token])
+
+  if (portalError) return <InvalidLinkScreen message={portalError} />
+  if (!token || repToken !== token) return <Splash />
   return <>{children}</>
+}
+
+function InvalidLinkScreen({ message }: { message: string }) {
+  return (
+    <div className="min-h-dvh grid place-items-center p-6" dir="rtl">
+      <div className="text-center space-y-4 max-w-sm">
+        <span className="mx-auto grid size-16 place-items-center rounded-2xl bg-destructive/10 text-destructive">
+          <Link2Off className="size-9" />
+        </span>
+        <h1 className="text-xl font-extrabold">رابط الدخول غير صالح</h1>
+        <p className="text-muted-foreground text-sm font-bold leading-relaxed">{message}</p>
+        <p className="text-xs text-muted-foreground">
+          تواصل مع المدير لتحصل على رابط جديد خاص بحسابك.
+        </p>
+        <a href="/" className="btn-primary btn-lg w-full inline-flex items-center justify-center gap-2">
+          <Truck className="size-5" /> الصفحة الرئيسية
+        </a>
+      </div>
+    </div>
+  )
 }
 
 /** Session-based rep dashboard (/rep/dashboard) — no unique-link token needed. */
@@ -111,9 +143,9 @@ export default function App() {
               <Route
                 path={`${REP_PORTAL_BASE}/:token`}
                 element={
-                  <RepRoute>
+                  <RepPortalRoute>
                     <RepApp />
-                  </RepRoute>
+                  </RepPortalRoute>
                 }
               />
               <Route path="*" element={<AuthRedirect />} />

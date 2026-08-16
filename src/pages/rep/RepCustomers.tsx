@@ -8,8 +8,11 @@ import {
   LocateFixed,
   Loader2,
   Search,
+  Map as MapIcon,
+  List,
 } from 'lucide-react'
 import { Money, Sheet, EmptyState, useToast } from '../../components/ui'
+import CustomerMap from '../../components/CustomerMap'
 import type { Customer } from '../../lib/types'
 import { customerDebts } from '../../lib/selectors'
 
@@ -37,6 +40,7 @@ export default function RepCustomers() {
   const [busy, setBusy] = useState(false)
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState<Customer | null>(null)
+  const [view, setView] = useState<'list' | 'map'>('list')
 
   const filtered = useMemo(() => {
     const q = query.trim()
@@ -103,11 +107,61 @@ export default function RepCustomers() {
           <Users className="size-5" />
           <NumCount n={myCustomers.length} />
         </div>
-        <button onClick={() => setAdding(true)} className="btn-primary btn-md">
-          <Plus className="size-5" /> عميل جديد
-        </button>
+        <div className="flex items-center gap-2">
+          <div className="flex items-center rounded-lg border border-border bg-muted/40 p-1" role="tablist" aria-label="عرض العملاء">
+            <button
+              onClick={() => setView('list')}
+              aria-current={view === 'list' ? 'page' : undefined}
+              className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-bold transition-colors ${
+                view === 'list' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground'
+              }`}
+            >
+              <List className="size-4" /> قائمة
+            </button>
+            <button
+              onClick={() => setView('map')}
+              aria-current={view === 'map' ? 'page' : undefined}
+              className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-bold transition-colors ${
+                view === 'map' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground'
+              }`}
+            >
+              <MapIcon className="size-4" /> خريطة
+            </button>
+          </div>
+          <button onClick={() => setAdding(true)} className="btn-primary btn-md">
+            <Plus className="size-5" /> عميل جديد
+          </button>
+        </div>
       </div>
 
+      {view === 'map' ? (
+        myCustomers.length === 0 ? (
+          <EmptyState
+            icon={<MapPin className="size-7" />}
+            title="لا توجد مواقع بعد"
+            desc="أضف عملاءك وحدد مواقعهم لتظهر هنا على الخريطة."
+            action={
+              <button onClick={() => setAdding(true)} className="btn-primary btn-md">
+                <UserRound className="size-5" /> إضافة أول عميل
+              </button>
+            }
+          />
+        ) : (
+          <CustomerMap
+            height={520}
+            customers={myCustomers.map((c) => ({
+              id: c.id,
+              name: c.name,
+              phone: c.phone,
+              address: c.address,
+              latitude: c.latitude!,
+              longitude: c.longitude!,
+              totalDebt: debts.get(c.id)?.total_debt,
+            }))}
+          />
+        )
+      ) : (
+        <>
       <div className="relative">
         <Search className="absolute start-3 top-1/2 -translate-y-1/2 size-5 text-muted-foreground" />
         <input
@@ -174,6 +228,8 @@ export default function RepCustomers() {
             )
           })}
         </div>
+      )}
+      </>
       )}
 
       {/* Add customer sheet */}

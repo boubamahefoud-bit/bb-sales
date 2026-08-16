@@ -303,3 +303,352 @@ drop trigger if exists trg_customer_debt_limit on public.sales_transactions;
 create trigger trg_customer_debt_limit
   before insert on public.sales_transactions
   for each row execute procedure public.check_customer_debt_limit();
+
+-- ============================================================
+-- 5) REP PORTAL TOKEN-AUTH (unique-link access)
+--    The rep link /rep-portal/:token works with the token alone —
+--    no email/password session needed. Any manager session on the
+--    tab is cleared client-side and the link never redirects to the
+--    manager dashboard. All reads/writes are security-definer and
+--    strictly scoped to the rep resolved from rep_token.
+-- ============================================================
+
+create or replace function public.rep_session(p_token uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_rep public.users%rowtype;
+  v_store public.stores%rowtype;
+  v_result jsonb;
+begin
+  if p_token is null then raise exception 'rep_token_required'; end if;
+
+  select * into v_rep from public.users where rep_token = p_token;
+  if not found then raise exception 'rep_token_invalid'; end if;
+  if v_rep.role <> 'sales_rep' then raise exception 'rep_token_invalid'; end if;
+
+  select * into v_store from public.stores where id = v_rep.store_id;
+  if not found then raise exception 'rep_store_not_found'; end if;
+
+  select jsonb_build_object(
+    'profile', to_jsonb(v_rep),
+    'store', to_jsonb(v_store),
+    'inventory', coalesce((
+      select jsonb_agg(to_jsonb(i) order by i.product_name)
+      from public.trucks_inventory i where i.rep_id = v_rep.id
+    ), '[]'::jsonb),
+    'customers', coalesce((
+      select jsonb_agg(to_jsonb(c) order by c.created_at desc)
+      from public.customers c where c.created_by_rep_id = v_rep.id
+    ), '[]'::jsonb),
+    'transactions', coalesce((
+      select jsonb_agg(to_jsonb(t) order by t.created_at desc)
+      from public.sales_transactions t where t.rep_id = v_rep.id
+    ), '[]'::jsonb),
+    'items', coalesce((
+      select jsonb_agg(to_jsonb(ti))
+      from public.transaction_items ti
+      where ti.transaction_id in (select id from public.sales_transactions where rep_id = v_rep.id)
+    ), '[]'::jsonb),
+    'repLocations', coalesce((
+      select jsonb_agg(to_jsonb(l) order by l.captured_at desc)
+      from public.rep_locations l where l.rep_id = v_rep.id
+    ), '[]'::jsonb)
+  ) into v_result;
+
+  return v_result;
+end;
+$$;
+
+create or replace function public.rep_create_sale(
+  p_token uuid,
+  p_customer_id uuid,
+  p_paid_amount numeric default 0,
+  p_items jsonb default '[]'::jsonb
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_rep public.users%rowtype;
+  v_customer public.customers%rowtype;
+  v_total numeric(12,2) := 0;
+  v_paid numeric(12,2);
+  v_debt numeric(12,2);
+  v_status public.payment_status;
+  v_tx public.sales_transactions%rowtype;
+  v_item jsonb;
+  v_stock public.trucks_inventory%rowtype;
+  v_qty integer;
+begin
+  if p_token is null then raise exception 'rep_token_required'; end if;
+  select * into v_rep from public.users where rep_token = p_token;
+  if not found then raise exception 'rep_token_invalid'; end if;
+
+  select * into v_customer
+  from public.customers
+  where id = p_customer_id and created_by_rep_id = v_rep.id;
+  if not found then raise exception 'rep_customer_not_found'; end if;
+
+  for v_item in select * from jsonb_array_elements(p_items) loop
+    v_total := v_total + (v_item->>'quantity')::numeric * (v_item->>'unit_price')::numeric;
+  end loop;
+
+  v_paid := least(coalesce(p_paid_amount, 0), v_total);
+  v_debt := greatest(v_total - v_paid, 0);
+  v_status := case when v_debt = 0 then 'paid' when v_paid = 0 then 'debt' else 'partial' end;
+
+  insert into public.sales_transactions (
+    store_id, rep_id, customer_id, total_amount, paid_amount, debt_amount, payment_status
+  )
+  values (v_rep.store_id, v_rep.id, v_customer.id, v_total, v_paid, v_debt, v_status)
+  returning * into v_tx;
+
+  for v_item in select * from jsonb_array_elements(p_items) loop
+    insert into public.transaction_items (
+      transaction_id, product_name, quantity, unit_price, subtotal
+    )
+    values (
+      v_tx.id,
+      v_item->>'product_name',
+      (v_item->>'quantity')::integer,
+      (v_item->>'unit_price')::numeric,
+      (v_item->>'quantity')::numeric * (v_item->>'unit_price')::numeric
+    );
+
+    select * into v_stock
+    from public.trucks_inventory
+    where rep_id = v_rep.id and product_name = v_item->>'product_name'
+    order by id limit 1;
+    if found then
+      v_qty := greatest(0, v_stock.quantity_remaining - (v_item->>'quantity')::integer);
+      update public.trucks_inventory
+      set quantity_remaining = v_qty
+      where id = v_stock.id;
+    end if;
+  end loop;
+
+  return to_jsonb(v_tx);
+end;
+$$;
+
+create or replace function public.rep_add_customer(
+  p_token uuid,
+  p_name text,
+  p_phone text default null,
+  p_address text default null,
+  p_latitude double precision default null,
+  p_longitude double precision default null,
+  p_debt_limit numeric default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_rep public.users%rowtype;
+  v_customer public.customers%rowtype;
+begin
+  if p_token is null then raise exception 'rep_token_required'; end if;
+  select * into v_rep from public.users where rep_token = p_token;
+  if not found then raise exception 'rep_token_invalid'; end if;
+
+  insert into public.customers (
+    store_id, name, phone, address, latitude, longitude, debt_limit, created_by_rep_id
+  )
+  values (
+    v_rep.store_id, p_name, p_phone, p_address, p_latitude, p_longitude, p_debt_limit, v_rep.id
+  )
+  returning * into v_customer;
+  return to_jsonb(v_customer);
+end;
+$$;
+
+create or replace function public.rep_update_customer(
+  p_token uuid,
+  p_customer_id uuid,
+  p_patch jsonb default '{}'::jsonb
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_rep public.users%rowtype;
+  v_customer public.customers%rowtype;
+begin
+  if p_token is null then raise exception 'rep_token_required'; end if;
+  select * into v_rep from public.users where rep_token = p_token;
+  if not found then raise exception 'rep_token_invalid'; end if;
+
+  select * into v_customer
+  from public.customers
+  where id = p_customer_id and created_by_rep_id = v_rep.id;
+  if not found then raise exception 'rep_customer_not_found'; end if;
+
+  if p_patch ? 'name' then v_customer.name := p_patch->>'name'; end if;
+  if p_patch ? 'phone' then v_customer.phone := p_patch->>'phone'; end if;
+  if p_patch ? 'address' then v_customer.address := p_patch->>'address'; end if;
+  if p_patch ? 'latitude' then v_customer.latitude := (p_patch->>'latitude')::double precision; end if;
+  if p_patch ? 'longitude' then v_customer.longitude := (p_patch->>'longitude')::double precision; end if;
+  if p_patch ? 'debt_limit' then v_customer.debt_limit := (p_patch->>'debt_limit')::numeric; end if;
+
+  update public.customers set
+    name = v_customer.name,
+    phone = v_customer.phone,
+    address = v_customer.address,
+    latitude = v_customer.latitude,
+    longitude = v_customer.longitude,
+    debt_limit = v_customer.debt_limit
+  where id = v_customer.id
+  returning * into v_customer;
+  return to_jsonb(v_customer);
+end;
+$$;
+
+create or replace function public.rep_delete_customer(
+  p_token uuid,
+  p_customer_id uuid
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_rep public.users%rowtype;
+begin
+  if p_token is null then raise exception 'rep_token_required'; end if;
+  select * into v_rep from public.users where rep_token = p_token;
+  if not found then raise exception 'rep_token_invalid'; end if;
+
+  delete from public.customers
+  where id = p_customer_id and created_by_rep_id = v_rep.id;
+  return found;
+end;
+$$;
+
+create or replace function public.rep_add_inventory(
+  p_token uuid,
+  p_product_name text,
+  p_product_image_url text default null,
+  p_quantity_loaded integer default 0,
+  p_unit_price numeric default 0
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_rep public.users%rowtype;
+  v_row public.trucks_inventory%rowtype;
+begin
+  if p_token is null then raise exception 'rep_token_required'; end if;
+  select * into v_rep from public.users where rep_token = p_token;
+  if not found then raise exception 'rep_token_invalid'; end if;
+
+  insert into public.trucks_inventory (
+    store_id, rep_id, product_name, product_image_url,
+    quantity_loaded, quantity_remaining, unit_price
+  )
+  values (
+    v_rep.store_id, v_rep.id, p_product_name, p_product_image_url,
+    p_quantity_loaded, p_quantity_loaded, p_unit_price
+  )
+  returning * into v_row;
+  return to_jsonb(v_row);
+end;
+$$;
+
+create or replace function public.rep_update_inventory(
+  p_token uuid,
+  p_item_id uuid,
+  p_patch jsonb default '{}'::jsonb
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_rep public.users%rowtype;
+  v_row public.trucks_inventory%rowtype;
+begin
+  if p_token is null then raise exception 'rep_token_required'; end if;
+  select * into v_rep from public.users where rep_token = p_token;
+  if not found then raise exception 'rep_token_invalid'; end if;
+
+  select * into v_row
+  from public.trucks_inventory
+  where id = p_item_id and rep_id = v_rep.id;
+  if not found then raise exception 'rep_inventory_not_found'; end if;
+
+  if p_patch ? 'product_name' then v_row.product_name := p_patch->>'product_name'; end if;
+  if p_patch ? 'product_image_url' then v_row.product_image_url := p_patch->>'product_image_url'; end if;
+  if p_patch ? 'quantity_loaded' then v_row.quantity_loaded := (p_patch->>'quantity_loaded')::integer; end if;
+  if p_patch ? 'quantity_remaining' then v_row.quantity_remaining := (p_patch->>'quantity_remaining')::integer; end if;
+  if p_patch ? 'unit_price' then v_row.unit_price := (p_patch->>'unit_price')::numeric; end if;
+
+  update public.trucks_inventory set
+    product_name = v_row.product_name,
+    product_image_url = v_row.product_image_url,
+    quantity_loaded = v_row.quantity_loaded,
+    quantity_remaining = v_row.quantity_remaining,
+    unit_price = v_row.unit_price
+  where id = v_row.id
+  returning * into v_row;
+  return to_jsonb(v_row);
+end;
+$$;
+
+create or replace function public.rep_add_location(
+  p_token uuid,
+  p_latitude double precision,
+  p_longitude double precision
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_rep public.users%rowtype;
+  v_loc public.rep_locations%rowtype;
+begin
+  if p_token is null then raise exception 'rep_token_required'; end if;
+  select * into v_rep from public.users where rep_token = p_token;
+  if not found then raise exception 'rep_token_invalid'; end if;
+
+  insert into public.rep_locations (store_id, rep_id, latitude, longitude)
+  values (v_rep.store_id, v_rep.id, p_latitude, p_longitude)
+  returning * into v_loc;
+  return to_jsonb(v_loc);
+end;
+$$;
+
+-- Rep-portal image uploads (unique-link mode): the client uploads with the
+-- anon key into a folder named by the rep's secret rep_token. Only allow
+-- anon inserts whose first path folder is a real rep_token.
+do $$
+begin
+  if exists (select 1 from pg_catalog.pg_namespace where nspname = 'storage') then
+    drop policy if exists product_images_rep_token_upload on storage.objects;
+    create policy "product_images_rep_token_upload"
+      on storage.objects for insert
+      with check (
+        bucket_id = 'product-images'
+        and (storage.foldername(name))[1] in (
+          select rep_token::text from public.users where rep_token is not null
+        )
+      );
+  end if;
+end
+$$;
