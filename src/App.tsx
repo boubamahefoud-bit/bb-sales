@@ -1,20 +1,26 @@
-import { useEffect } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useParams } from 'react-router-dom'
 import type { ReactNode } from 'react'
 import { ThemeProvider } from './lib/theme'
 import { StoreProvider, useStore } from './lib/store'
-import { ToastProvider, useToast } from './components/ui'
+import { ToastProvider } from './components/ui'
 import Login from './pages/auth/Login'
 import Signup from './pages/auth/Signup'
 import RepApp from './pages/rep/RepApp'
 import ManagerApp from './pages/manager/ManagerApp'
 import { Truck } from 'lucide-react'
+import type { UserProfile } from './lib/types'
 
 export const REP_PORTAL_BASE = '/rep-portal'
 export const ADMIN_DASHBOARD = '/admin/dashboard'
+export const REP_DASHBOARD = '/rep/dashboard'
 
 export function repPortalPath(token?: string | null): string {
   return `${REP_PORTAL_BASE}/${token ?? ''}`
+}
+
+/** Single source of truth for where each role belongs after login/load. */
+export function roleHomePath(user: UserProfile): string {
+  return user.role === 'manager' ? ADMIN_DASHBOARD : REP_DASHBOARD
 }
 
 function Splash() {
@@ -30,41 +36,42 @@ function Splash() {
   )
 }
 
-/** Guards all /admin/* routes. A rep hitting these gets blocked + toast. */
-function ProtectedRoute({ children }: { children: ReactNode }) {
+/**
+ * Authentication + RBAC middleware.
+ * - Waits for the session/profile (role read from the profiles table on load).
+ * - Redirects unauthenticated users to /login.
+ * - Strictly enforces role isolation: a rep hitting a manager route is sent to
+ *   their own portal, and a manager hitting a rep route is sent to /admin.
+ * - Redirects are silent (no error toasts) so session switches never dead-end.
+ */
+function ManagerRoute({ children }: { children: ReactNode }) {
   const { user, initialized } = useStore()
-  const { show } = useToast()
-
-  useEffect(() => {
-    if (initialized && user && user.role === 'sales_rep') {
-      show('error', 'Access Denied: Sales Reps cannot view Manager Dashboard')
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialized, user])
-
   if (!initialized) return <Splash />
   if (!user) return <Navigate to="/login" replace />
-  if (user.role !== 'manager') return <Navigate to={repPortalPath(user.rep_token)} replace />
+  if (user.role !== 'manager') return <Navigate to={roleHomePath(user)} replace />
   return <>{children}</>
 }
 
-/** Guards /rep-portal/:token. A rep can ONLY access their own unique link. */
 function RepRoute({ children }: { children: ReactNode }) {
   const { token } = useParams()
   const { user, initialized } = useStore()
-  const { show } = useToast()
+  if (!initialized) return <Splash />
+  if (!user) return <Navigate to="/login" replace />
+  // A manager must never view the rep-only portal.
+  if (user.role !== 'sales_rep') return <Navigate to={ADMIN_DASHBOARD} replace />
+  // A rep can only use their own unique link; a mismatched/empty token is
+  // redirected to their own portal (never into an infinite loop).
+  if (!user.rep_token) return <Navigate to="/login" replace />
+  if (token && token !== user.rep_token) return <Navigate to={repPortalPath(user.rep_token)} replace />
+  return <>{children}</>
+}
 
-  useEffect(() => {
-    if (initialized && user && user.role === 'manager') {
-      show('error', 'Access Denied: Managers cannot view the Sales Rep Portal')
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialized, user])
-
+/** Session-based rep dashboard (/rep/dashboard) — no unique-link token needed. */
+function RepDashboardRoute({ children }: { children: ReactNode }) {
+  const { user, initialized } = useStore()
   if (!initialized) return <Splash />
   if (!user) return <Navigate to="/login" replace />
   if (user.role !== 'sales_rep') return <Navigate to={ADMIN_DASHBOARD} replace />
-  if (!user.rep_token || user.rep_token !== token) return <Navigate to={repPortalPath(user.rep_token)} replace />
   return <>{children}</>
 }
 
@@ -73,11 +80,7 @@ function AuthRedirect() {
   const { user, initialized } = useStore()
   if (!initialized) return <Splash />
   if (!user) return <Navigate to="/login" replace />
-  return user.role === 'manager' ? (
-    <Navigate to={ADMIN_DASHBOARD} replace />
-  ) : (
-    <Navigate to={repPortalPath(user.rep_token)} replace />
-  )
+  return <Navigate to={roleHomePath(user)} replace />
 }
 
 export default function App() {
@@ -92,9 +95,17 @@ export default function App() {
               <Route
                 path="/admin/dashboard"
                 element={
-                  <ProtectedRoute>
+                  <ManagerRoute>
                     <ManagerApp />
-                  </ProtectedRoute>
+                  </ManagerRoute>
+                }
+              />
+              <Route
+                path={REP_DASHBOARD}
+                element={
+                  <RepDashboardRoute>
+                    <RepApp />
+                  </RepDashboardRoute>
                 }
               />
               <Route

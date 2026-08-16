@@ -317,7 +317,7 @@ begin
       values (coalesce(v_meta ->> 'store_name', v_user.email), v_user.id)
       returning id into v_store_id;
       update public.users
-      set role = 'manager', store_id = v_store_id
+      set role = 'manager', store_id = v_store_id, rep_token = null
       where id = v_user.id;
       select * into v_profile from public.users where id = v_user.id;
     elsif v_profile.role <> 'manager' or v_profile.store_id is null then
@@ -329,7 +329,7 @@ begin
         v_store_id := v_profile.store_id;
       end if;
       update public.users
-      set role = 'manager', store_id = v_store_id
+      set role = 'manager', store_id = v_store_id, rep_token = null
       where id = v_user.id;
       select * into v_profile from public.users where id = v_user.id;
     end if;

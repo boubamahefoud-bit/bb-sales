@@ -3,7 +3,7 @@ import { useNavigate, Navigate, Link } from 'react-router-dom'
 import { Truck, Store, Eye, EyeOff, UserPlus, Loader2, MailCheck, ArrowRight } from 'lucide-react'
 import { useStore } from '../../lib/store'
 import { useToast } from '../../components/ui'
-import { ADMIN_DASHBOARD, repPortalPath } from '../../App'
+import { ADMIN_DASHBOARD, roleHomePath } from '../../App'
 
 export default function Signup() {
   const { user, signUpManager } = useStore()
@@ -41,8 +41,7 @@ export default function Signup() {
   }
 
   if (user && !needsConfirm) {
-    const to = user.role === 'manager' ? ADMIN_DASHBOARD : repPortalPath(user.rep_token)
-    return <Navigate to={to} replace />
+    return <Navigate to={roleHomePath(user)} replace />
   }
 
   if (needsConfirm) {

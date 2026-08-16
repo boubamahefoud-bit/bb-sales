@@ -4,7 +4,7 @@ import { Truck, Eye, EyeOff, LogIn, UserPlus, Loader2 } from 'lucide-react'
 import { useStore } from '../../lib/store'
 import { useToast } from '../../components/ui'
 import { supabase } from '../../lib/supabase'
-import { ADMIN_DASHBOARD, repPortalPath } from '../../App'
+import { roleHomePath } from '../../App'
 
 export default function Login() {
   const { user, login, refresh } = useStore()
@@ -58,16 +58,14 @@ export default function Login() {
     }
     show('success', 'تم تسجيل الدخول بنجاح')
     if (res.user) {
-      const to = res.user.role === 'manager' ? ADMIN_DASHBOARD : repPortalPath(res.user.rep_token)
-      navigate(to, { replace: true })
+      navigate(roleHomePath(res.user), { replace: true })
     } else {
       navigate('/', { replace: true })
     }
   }
 
   if (user) {
-    const to = user.role === 'manager' ? ADMIN_DASHBOARD : repPortalPath(user.rep_token)
-    return <Navigate to={to} replace />
+    return <Navigate to={roleHomePath(user)} replace />
   }
 
   return (
