@@ -79,6 +79,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
     let profile: UserProfile | null = null
     if (authUser) {
+      // Always run the self-healing RPC on load so ANY stale manager profile
+      // is repaired to role='manager' + store_id (fixes "Only managers can
+      // create sales reps" even when the profile row already exists).
+      const { data: ensured } = await supabase!.rpc('ensure_user_profile')
       const { data: p } = await supabase!
         .from('users')
         .select('*')
@@ -86,18 +90,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         .maybeSingle()
       if (p) {
         profile = p as UserProfile
-      } else {
-        // New user (or the trigger didn't run): auto-create a default profile
-        // row via the security-definer RPC, then read it back.
-        const { data: ensured } = await supabase!.rpc('ensure_user_profile')
-        if (ensured) {
-          const { data: p2 } = await supabase!
-            .from('users')
-            .select('*')
-            .eq('id', authUser.id)
-            .maybeSingle()
-          profile = (p2 as UserProfile) ?? (ensured as unknown as UserProfile)
-        }
+      } else if (ensured) {
+        profile = ensured as unknown as UserProfile
       }
     }
 
@@ -222,7 +216,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             profile = {
               id: au.id,
               email: au.email ?? '',
-              role: meta.role === 'manager' ? 'manager' : 'sales_rep',
+              role: meta.role === 'manager' || meta.role === 'admin' ? 'manager' : 'sales_rep',
               full_name: typeof meta.full_name === 'string' ? meta.full_name : '',
               store_id: null,
               created_at: au.created_at,

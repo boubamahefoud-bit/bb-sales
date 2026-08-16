@@ -25,9 +25,10 @@ end
 $$;
 
 -- 2) SELF-REPAIRING PROFILE (fixes "Only managers can create sales reps")
---    Any store manager whose auth metadata says role='manager' is guaranteed
---    a profile row with role='manager' and a store_id, even if their row is
---    stale or the signup trigger never ran. Managers are never downgraded.
+--    Any store manager whose auth metadata says role='manager'/'admin' or
+--    carries a store_name is guaranteed a profile row with role='manager' and
+--    a store_id, even if their row is stale or the signup trigger never ran.
+--    Managers are never downgraded.
 create or replace function public.ensure_user_profile()
 returns jsonb
 language plpgsql
@@ -45,7 +46,11 @@ begin
   if not found then raise exception 'not authenticated'; end if;
 
   v_meta := coalesce(v_user.raw_user_meta_data, '{}'::jsonb);
-  v_role := coalesce(v_meta ->> 'role', 'sales_rep');
+  v_role := case
+    when coalesce(v_meta ->> 'role', '') in ('manager', 'admin') then 'manager'
+    when v_meta ? 'store_name' then 'manager'
+    else 'sales_rep'
+  end;
 
   select * into v_profile from public.users where id = v_user.id;
 
@@ -92,6 +97,108 @@ begin
   end if;
 
   return to_jsonb(v_profile);
+end;
+$$;
+
+-- 2b) SIGNUP TRIGGER — also treats role='admin' / store_name as a manager.
+--     Replaces the older trigger function on the live database.
+create or replace function public.handle_new_user()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_meta jsonb := new.raw_user_meta_data;
+  v_store_id uuid;
+  v_is_manager boolean;
+begin
+  v_is_manager :=
+    coalesce(v_meta ->> 'role', '') in ('manager', 'admin')
+    or v_meta ? 'store_name';
+
+  insert into public.users (id, email, full_name)
+  values (
+    new.id,
+    coalesce(new.email, ''),
+    coalesce(v_meta ->> 'full_name', '')
+  )
+  on conflict (id) do nothing;
+
+  if v_is_manager then
+    insert into public.stores (name, owner_user_id)
+    values (coalesce(v_meta ->> 'store_name', new.email), new.id)
+    returning id into v_store_id;
+    update public.users
+    set role = 'manager', store_id = v_store_id
+    where id = new.id;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists on_auth_user_created on auth.users;
+create trigger on_auth_user_created
+  after insert on auth.users
+  for each row execute procedure public.handle_new_user();
+
+-- 2c) ONE-TIME DATA FIX for the primary manager account.
+--     Sets role='manager' for boubamahfoud@gmail.com regardless of how the
+--     account was originally created, so create_sales_rep stops blocking.
+--     Idempotent: safe to re-run; does nothing if the email is absent.
+do $$
+declare
+  v_uid uuid;
+  v_meta jsonb;
+  v_profile public.users%rowtype;
+  v_store_id uuid;
+begin
+  select id, raw_user_meta_data into v_uid, v_meta
+  from auth.users
+  where lower(email) = lower('boubamahfoud@gmail.com')
+  limit 1;
+
+  if v_uid is null then
+    raise notice 'boubamahfoud@gmail.com not found in auth.users — skipping targeted fix';
+    return;
+  end if;
+
+  v_meta := coalesce(v_meta, '{}'::jsonb);
+  if not (v_meta ? 'store_name') then
+    v_meta := v_meta || jsonb_build_object('store_name', split_part(v_uid::text, '-', 1));
+  end if;
+  if coalesce(v_meta ->> 'role', '') not in ('manager', 'admin') then
+    v_meta := v_meta || jsonb_build_object('role', 'manager');
+  end if;
+  update auth.users set raw_user_meta_data = v_meta where id = v_uid;
+
+  select * into v_profile from public.users where id = v_uid;
+  if not found then
+    insert into public.users (id, email, full_name, role)
+    values (v_uid, 'boubamahfoud@gmail.com', coalesce(v_meta ->> 'full_name', v_meta ->> 'store_name', ''), 'sales_rep')
+    returning * into v_profile;
+  end if;
+
+  if v_profile.store_id is null then
+    select id into v_store_id
+    from public.stores
+    where owner_user_id = v_uid
+    limit 1;
+    if v_store_id is null then
+      insert into public.stores (name, owner_user_id)
+      values (coalesce(v_meta ->> 'store_name', v_uid::text), v_uid)
+      returning id into v_store_id;
+    end if;
+    update public.users
+    set store_id = v_store_id, role = 'manager'
+    where id = v_uid;
+  else
+    update public.users
+    set role = 'manager'
+    where id = v_uid;
+  end if;
+
+  raise notice 'boubamahfoud@gmail.com promoted to manager (store %)', v_profile.store_id;
 end;
 $$;
 

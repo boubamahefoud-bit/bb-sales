@@ -58,7 +58,14 @@ export default function ManagerReps() {
       show('success', 'تم إنشاء المندوب — انسخ رابط الوصول')
     } catch (e) {
       console.error(e)
-      show('error', (e as Error).message || 'تعذر إنشاء المندوب')
+      const raw = (e as Error)?.message ?? ''
+      // Map the RPC rejection to a helpful Arabic message. The account may be
+      // a rep that never got promoted — re-login triggers the self-heal.
+      const friendly =
+        /only managers can create sales reps/i.test(raw)
+          ? 'حسابك ليس مخولاً بإنشاء مندوبين (يجب أن يكون مدير متجر). أعد تسجيل الدخول ثم حاول مرة أخرى.'
+          : raw || 'تعذر إنشاء المندوب'
+      show('error', friendly)
     } finally {
       setBusy(false)
     }

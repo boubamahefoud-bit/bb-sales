@@ -152,6 +152,8 @@ create index idx_locations_rep on public.rep_locations (rep_id, captured_at desc
 -- ---------- TRIGGERS ----------
 
 -- Creates profile on signup; managers get a store + role automatically.
+-- A user is treated as a Store Manager when their auth metadata carries
+-- role='manager'/'admin' OR a store_name (the signup form always sends both).
 create or replace function public.handle_new_user()
 returns trigger
 language plpgsql
@@ -161,7 +163,12 @@ as $$
 declare
   v_meta jsonb := new.raw_user_meta_data;
   v_store_id uuid;
+  v_is_manager boolean;
 begin
+  v_is_manager :=
+    coalesce(v_meta ->> 'role', '') in ('manager', 'admin')
+    or v_meta ? 'store_name';
+
   insert into public.users (id, email, full_name)
   values (
     new.id,
@@ -170,7 +177,7 @@ begin
   )
   on conflict (id) do nothing;
 
-  if coalesce(v_meta ->> 'role', '') = 'manager' then
+  if v_is_manager then
     insert into public.stores (name, owner_user_id)
     values (coalesce(v_meta ->> 'store_name', new.email), new.id)
     returning id into v_store_id;
@@ -267,6 +274,8 @@ $$;
 --   - no row at all          -> create a profile (manager gets a store too)
 --   - manager metadata, but  -> repair: ensure role='manager' + store_id
 --     row missing/role wrong
+-- A user is treated as a manager when their auth metadata carries
+-- role='manager'/'admin' OR a store_name (signup always sends both).
 -- Never downgrades an existing manager.
 create or replace function public.ensure_user_profile()
 returns jsonb
@@ -285,7 +294,11 @@ begin
   if not found then raise exception 'not authenticated'; end if;
 
   v_meta := coalesce(v_user.raw_user_meta_data, '{}'::jsonb);
-  v_role := coalesce(v_meta ->> 'role', 'sales_rep');
+  v_role := case
+    when coalesce(v_meta ->> 'role', '') in ('manager', 'admin') then 'manager'
+    when v_meta ? 'store_name' then 'manager'
+    else 'sales_rep'
+  end;
 
   select * into v_profile from public.users where id = v_user.id;
 
