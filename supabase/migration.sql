@@ -652,3 +652,8 @@ begin
   end if;
 end
 $$;
+
+-- Force PostgREST to reload its schema cache so the new RPCs are visible to
+-- the anon key immediately (avoids PGRST202 "Could not find the function"
+-- when the SQL editor / tooling did not auto-refresh it).
+notify pgrst, 'reload schema';

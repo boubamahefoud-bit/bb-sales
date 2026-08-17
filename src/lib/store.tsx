@@ -23,6 +23,28 @@ import type {
   UserProfile,
 } from './types'
 
+/**
+ * Classify a rep-portal load failure into a user-facing Arabic message.
+ * A PGRST202 error means the rep_session RPC does not exist in the live DB
+ * (migration not applied) — the link itself may be perfectly valid, so we
+ * must not report it as "invalid link". Only a genuine rep_token rejection
+ * from the RPC (rep_token_required / rep_token_invalid) is an invalid link.
+ */
+function repPortalError(err: unknown): string {
+  // Local backend returns an already-user-facing Arabic string.
+  if (typeof err === 'string') return err
+  const msg = (err as { message?: string } | null | undefined)?.message ?? ''
+  const code = (err as { code?: string } | null | undefined)?.code ?? ''
+  if (code === 'PGRST202' || msg.includes('Could not find the function')) {
+    return 'روابط المندوبين لم تُفعَّل في قاعدة البيانات بعد — يرجى تنفيذ ملف التحديث (migration.sql) من محرر SQL.'
+  }
+  if (msg.includes('rep_token_required') || msg.includes('rep_token_invalid')) {
+    return 'رابط الدخول غير صالح أو منتهي'
+  }
+  console.error('rep_portal_load_error', err)
+  return 'تعذر تحميل بيانات الحساب، حاول مرة أخرى لاحقاً'
+}
+
 interface StoreCtx {
   backendType: 'supabase' | 'local'
   initialized: boolean
@@ -75,21 +97,27 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [store, setStore] = useState<Store | null>(null)
   const [data, setData] = useState<DataSnapshot>(emptyData)
   const [repToken, setRepToken] = useState<string | null>(null)
+  // Mirrors `user` so callbacks (refresh, polling) can read the latest rep
+  // without adding `user` to their deps (which would retrigger the effects).
+  const userRef = useRef<UserProfile | null>(null)
+  useEffect(() => {
+    userRef.current = user
+  }, [user])
 
   const isLocal = !isSupabaseConfigured
 
   /** Loads a rep's full snapshot using their unique link token as the credential. */
   const fetchRepPortal = useCallback(
-    async (token: string): Promise<{ u: UserProfile | null; d: DataSnapshot }> => {
+    async (token: string): Promise<{ u: UserProfile | null; d: DataSnapshot; error?: unknown }> => {
       if (isLocal) {
         const local = localRef.current!
         const { user: u, error: err } = await local.signInByToken(token)
-        if (err || !u) return { u: null, d: emptyData }
+        if (err || !u) return { u: null, d: emptyData, error: err }
         const d = await local.fetchAll()
         return { u, d }
       }
       const { data, error: e } = await supabase!.rpc('rep_session', { p_token: token })
-      if (e || !data) return { u: null, d: emptyData }
+      if (e || !data) return { u: null, d: emptyData, error: e ?? new Error('rep_session returned no data') }
       const s = data as RepSessionResult
       const u = s.profile
       const d: DataSnapshot = {
@@ -162,10 +190,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
     if (repToken) {
       // Rep portal unique-link mode: the token (not a session) is the credential.
-      const { u, d } = await fetchRepPortal(repToken)
+      const res = await fetchRepPortal(repToken)
+      // A refresh happens on mount and every 20s poll. If the RPC fails for a
+      // transient reason (network blip, RPC briefly unavailable), keep the
+      // existing rep snapshot instead of wiping a working session.
+      if (!res.u) {
+        if (userRef.current) return userRef.current
+        return null
+      }
+      const u = res.u
       setUser(u)
-      setStore(u?.store_id ? d.stores.find((s) => s.id === u.store_id) ?? null : null)
-      setData(d)
+      setStore(u.store_id ? res.d.stores.find((s) => s.id === u.store_id) ?? null : null)
+      setData(res.d)
       setInitialized(true)
       return u
     }
@@ -362,14 +398,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         // Bypass/clear any active Manager session on this tab first.
         await supabase!.auth.signOut().catch(() => {})
         setRepToken(token)
-        const { u, d } = await fetchRepPortal(token)
-        if (!u) {
+        const res = await fetchRepPortal(token)
+        if (!res.u) {
           setRepToken(null)
-          return { error: 'رابط الدخول غير صالح أو منتهي' }
+          return { error: repPortalError(res.error) }
         }
+        const u = res.u
         setUser(u)
-        setStore(u.store_id ? d.stores.find((s) => s.id === u.store_id) ?? null : null)
-        setData(d)
+        setStore(u.store_id ? res.d.stores.find((s) => s.id === u.store_id) ?? null : null)
+        setData(res.d)
         setInitialized(true)
         return { user: u }
       } finally {
