@@ -247,16 +247,33 @@ begin
 
   insert into auth.users (
     id, email, encrypted_password, email_confirmed_at,
-    raw_user_meta_data, aud, role
+    raw_app_meta_data, raw_user_meta_data, aud, role
   )
   values (
     v_new_id,
     lower(p_email),
     crypt(p_password, gen_salt('bf')),
     now(),
+    jsonb_build_object('provider', 'email', 'providers', jsonb_build_array('email')),
     jsonb_build_object('full_name', p_full_name, 'role', 'sales_rep', 'truck_id', p_truck_id),
     'authenticated',
     'authenticated'
+  );
+
+  -- GoTrue only authenticates email/password sign-ins when the user has a
+  -- matching row in auth.identities (provider 'email'); without it the rep
+  -- would exist in auth.users but always get "Invalid login credentials".
+  insert into auth.identities (
+    id, user_id, provider_id, identity_data, provider,
+    last_sign_in_at, created_at, updated_at
+  )
+  values (
+    gen_random_uuid(),
+    v_new_id,
+    v_new_id::text,
+    jsonb_build_object('sub', v_new_id::text, 'email', lower(p_email)),
+    'email',
+    now(), now(), now()
   );
 
   update public.users
@@ -269,6 +286,33 @@ begin
   return jsonb_build_object('id', v_new_id, 'rep_token', v_token);
 end;
 $$;
+
+-- 3b) BACKFILL auth.identities FOR EXISTING SALES REPS
+--     Reps created before the auth.identities insert above exist in
+--     auth.users but cannot sign in with email/password because GoTrue
+--     requires an identity row. This idempotently creates the missing
+--     'email' identity for every existing sales rep (and any rep-created
+--     account) that has a password hash but no email identity yet.
+insert into auth.identities (
+  id, user_id, provider_id, identity_data, provider,
+  last_sign_in_at, created_at, updated_at
+)
+select
+  gen_random_uuid(),
+  u.id,
+  u.id::text,
+  jsonb_build_object('sub', u.id::text, 'email', u.email),
+  'email',
+  coalesce(u.last_sign_in_at, u.created_at),
+  u.created_at,
+  u.created_at
+from auth.users u
+where u.id in (select id from public.users where role = 'sales_rep')
+  and u.encrypted_password is not null
+  and not exists (
+    select 1 from auth.identities i
+    where i.user_id = u.id and i.provider = 'email'
+  );
 
 -- 4) DATABASE-LEVEL DEBT LIMIT ENFORCEMENT
 --    Rejects any transaction that would push a customer past debt_limit.

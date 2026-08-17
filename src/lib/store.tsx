@@ -45,6 +45,10 @@ function repPortalError(err: unknown): string {
   return 'تعذر تحميل بيانات الحساب، حاول مرة أخرى لاحقاً'
 }
 
+// localStorage key holding the rep unique-link token so the Sales Rep app
+// restores its session on reload / PWA home-screen launch (no URL token).
+const REP_TOKEN_KEY = 'bb_sales_rep_token_v2'
+
 interface StoreCtx {
   backendType: 'supabase' | 'local'
   initialized: boolean
@@ -214,9 +218,32 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [fetchSupabase, fetchRepPortal, isLocal, repToken])
 
   useEffect(() => {
-    refresh().catch(() => setInitialized(true))
+    const restore = async () => {
+      // On a /rep-portal/:token URL the RepPortalRoute component owns the
+      // enterRepPortal flow — don't race it with a session refresh here.
+      if (window.location.pathname.startsWith('/rep-portal/')) return
+      // Rep unique-link session persistence (PWA / installed app): if the app
+      // opens without a token in the URL (home-screen launch) but a previous
+      // rep-portal login was stored, restore it instead of bouncing to /login.
+      const storedToken = window.localStorage.getItem(REP_TOKEN_KEY)
+      if (storedToken) {
+        const res = await enterRepPortal(storedToken)
+        if (res.error) {
+          // Only a genuine invalid-link rejection means the rep was deleted —
+          // drop the stored credential then fall back to normal session load.
+          // Transient RPC/network failures keep it stored for a later retry.
+          if (res.error === 'رابط الدخول غير صالح أو منتهي') {
+            window.localStorage.removeItem(REP_TOKEN_KEY)
+          }
+          await refresh()
+        }
+        return
+      }
+      await refresh()
+    }
+    restore().catch(() => setInitialized(true))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refresh, isLocal])
+  }, [])
 
   // Token-mode polling: no realtime channel exists without an auth session, so
   // keep the rep's snapshot fresh by re-fetching the rep_session RPC.
@@ -363,6 +390,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(async () => {
     setRepToken(null)
+    window.localStorage.removeItem(REP_TOKEN_KEY)
     if (isLocal) {
       await localRef.current!.signOut()
     } else {
@@ -388,6 +416,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           const { user: u, error: err } = await localRef.current!.signInByToken(token)
           if (err || !u) return { error: err ?? 'رابط الدخول غير صالح أو منتهي' }
           setRepToken(token)
+          window.localStorage.setItem(REP_TOKEN_KEY, token)
           const d = await localRef.current!.fetchAll()
           setUser(u)
           setStore(u.store_id ? d.stores.find((s) => s.id === u.store_id) ?? null : null)
@@ -401,8 +430,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         const res = await fetchRepPortal(token)
         if (!res.u) {
           setRepToken(null)
+          window.localStorage.removeItem(REP_TOKEN_KEY)
           return { error: repPortalError(res.error) }
         }
+        window.localStorage.setItem(REP_TOKEN_KEY, token)
         const u = res.u
         setUser(u)
         setStore(u.store_id ? res.d.stores.find((s) => s.id === u.store_id) ?? null : null)

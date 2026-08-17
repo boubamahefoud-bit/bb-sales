@@ -388,16 +388,33 @@ begin
 
   insert into auth.users (
     id, email, encrypted_password, email_confirmed_at,
-    raw_user_meta_data, aud, role
+    raw_app_meta_data, raw_user_meta_data, aud, role
   )
   values (
     v_new_id,
     lower(p_email),
     crypt(p_password, gen_salt('bf')),
     now(),
+    jsonb_build_object('provider', 'email', 'providers', jsonb_build_array('email')),
     jsonb_build_object('full_name', p_full_name, 'role', 'sales_rep', 'truck_id', p_truck_id),
     'authenticated',
     'authenticated'
+  );
+
+  -- GoTrue only authenticates email/password sign-ins when the user has a
+  -- matching row in auth.identities (provider 'email'); without it the rep
+  -- would exist in auth.users but always get "Invalid login credentials".
+  insert into auth.identities (
+    id, user_id, provider_id, identity_data, provider,
+    last_sign_in_at, created_at, updated_at
+  )
+  values (
+    gen_random_uuid(),
+    v_new_id,
+    v_new_id::text,
+    jsonb_build_object('sub', v_new_id::text, 'email', lower(p_email)),
+    'email',
+    now(), now(), now()
   );
 
   update public.users
