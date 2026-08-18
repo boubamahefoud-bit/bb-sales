@@ -349,7 +349,7 @@ export default function ManagerCustomers() {
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <label htmlFor="mc-limit" className="label">حد الدين المسموح (ر.س)</label>
+              <label htmlFor="mc-limit" className="label">حد الدين المسموح (أ.م)</label>
               <input id="mc-limit" type="number" inputMode="decimal" min={0} dir="ltr" className="input text-left tnum" placeholder="مثال: 500" value={form.debt_limit} onChange={(e) => setForm((f) => ({ ...f, debt_limit: e.target.value }))} />
               <p className="text-xs text-muted-foreground mt-1">اتركه فارغاً للسماح بدون حد.</p>
             </div>

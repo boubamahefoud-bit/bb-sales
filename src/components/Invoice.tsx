@@ -64,12 +64,12 @@ export default function Invoice({
       '',
       '*الأصناف:*',
       ...items.map(
-        (i) => `• ${i.product_name}: ${i.quantity} × ${i.unit_price.toFixed(2)} = ${i.subtotal.toFixed(2)} ر.س`,
+        (i) => `• ${i.product_name}: ${i.quantity} × ${i.unit_price.toFixed(2)} = ${i.subtotal.toFixed(2)} أ.م`,
       ),
       '',
-      `*الإجمالي:* ${transaction.total_amount.toFixed(2)} ر.س`,
-      `*المدفوع:* ${transaction.paid_amount.toFixed(2)} ر.س`,
-      `*الدين المتبقي:* ${transaction.debt_amount.toFixed(2)} ر.س`,
+      `*الإجمالي:* ${transaction.total_amount.toFixed(2)} أ.م`,
+      `*المدفوع:* ${transaction.paid_amount.toFixed(2)} أ.م`,
+      `*الدين المتبقي:* ${transaction.debt_amount.toFixed(2)} أ.م`,
       `*الحالة:* ${statusMeta.label} (${statusMeta.en})`,
     ]
     const url = `https://wa.me/?text=${encodeURIComponent(lines.join('\n'))}`
@@ -147,15 +147,15 @@ export default function Invoice({
           <div className="space-y-1 text-sm border-t-2 border-slate-200 pt-3">
             <div className="flex justify-between">
               <span className="text-slate-500">الإجمالي الكلي</span>
-              <span className="font-extrabold tnum" dir="ltr">{transaction.total_amount.toFixed(2)} ر.س</span>
+              <span className="font-extrabold tnum" dir="ltr">{transaction.total_amount.toFixed(2)} أ.م</span>
             </div>
             <div className="flex justify-between">
               <span className="text-slate-500">المدفوع نقداً</span>
-              <span className="font-bold tnum text-emerald-700" dir="ltr">{transaction.paid_amount.toFixed(2)} ر.س</span>
+              <span className="font-bold tnum text-emerald-700" dir="ltr">{transaction.paid_amount.toFixed(2)} أ.م</span>
             </div>
             <div className="flex justify-between">
               <span className="text-slate-500">الدين المتبقي</span>
-              <span className="font-bold tnum text-red-700" dir="ltr">{transaction.debt_amount.toFixed(2)} ر.س</span>
+              <span className="font-bold tnum text-red-700" dir="ltr">{transaction.debt_amount.toFixed(2)} أ.م</span>
             </div>
           </div>
 

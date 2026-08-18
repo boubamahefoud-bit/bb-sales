@@ -138,7 +138,7 @@ export default function ManagerReps() {
                 <div className="text-end shrink-0 space-y-1">
                   <div className="text-xs text-muted-foreground font-bold">كاش اليوم</div>
                   <div className="font-extrabold text-accent tnum" dir="ltr">
-                    {(daily?.cash_collected ?? 0).toFixed(2)} ر.س
+                    {(daily?.cash_collected ?? 0).toFixed(2)} أ.م
                   </div>
                 </div>
               </button>

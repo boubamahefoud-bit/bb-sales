@@ -259,7 +259,7 @@ export class LocalBackend {
         .filter((t) => t.customer_id === input.customerId)
         .reduce((s, t) => s + t.debt_amount, 0)
       if (existingDebt + debt > customer.debt_limit) {
-        throw new Error(`تجاوز حد الدين المسموح للعميل (الحد ${customer.debt_limit} ر.س)`)
+        throw new Error(`تجاوز حد الدين المسموح للعميل (الحد ${customer.debt_limit} أ.م)`)
       }
     }
     const status: SalesTransaction['payment_status'] = debt === 0 ? 'paid' : paid === 0 ? 'debt' : 'partial'

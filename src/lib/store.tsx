@@ -570,7 +570,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           .filter((t) => t.customer_id === input.customerId)
           .reduce((s, t) => s + toNumber(t.debt_amount), 0)
         if (existingDebt + debt > toNumber(customer.debt_limit)) {
-          throw new Error(`تجاوز حد الدين المسموح للعميل (الحد ${toNumber(customer.debt_limit)} ر.س)`)
+          throw new Error(`تجاوز حد الدين المسموح للعميل (الحد ${toNumber(customer.debt_limit)} أ.م)`)
         }
       }
 

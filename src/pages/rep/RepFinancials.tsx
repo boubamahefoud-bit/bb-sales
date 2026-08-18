@@ -6,19 +6,27 @@ import {
   Receipt,
   TrendingUp,
   ListChecks,
+  Eye,
 } from 'lucide-react'
-import { StatCard, Money, Num, PaymentBadge, EmptyState } from '../../components/ui'
+import { StatCard, Money, Num, PaymentBadge, EmptyState, Sheet } from '../../components/ui'
+import Invoice from '../../components/Invoice'
 import { repDailySummary, joinTransactions, customerDebts } from '../../lib/selectors'
 import { fmtDateTime, sameDay, todayKey } from '../../lib/format'
 
 export default function RepFinancials() {
   const { user, data } = useStore()
   const [day, setDay] = useState(todayKey())
+  const [selectedId, setSelectedId] = useState<string | null>(null)
 
   const myTxs = useMemo(() => {
     const joined = joinTransactions(data)
     return joined.filter((t) => t.rep_id === user?.id)
   }, [data, user?.id])
+
+  const selected = useMemo(
+    () => (selectedId ? (myTxs.find((t) => t.id === selectedId) ?? null) : null),
+    [selectedId, myTxs],
+  )
 
   const todayTotals = repDailySummary(data, user?.id, day).get(user?.id ?? '') ?? {
     total_sales: 0,
@@ -119,7 +127,11 @@ export default function RepFinancials() {
         ) : (
           <div className="space-y-2.5">
             {dayTxs.map((t) => (
-              <div key={t.id} className="card p-4 flex items-center gap-3">
+              <button
+                key={t.id}
+                onClick={() => setSelectedId(t.id)}
+                className="card w-full p-4 flex items-center gap-3 text-start hover:border-primary/40"
+              >
                 <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-secondary text-secondary-foreground">
                   <Receipt className="size-5" />
                 </span>
@@ -129,15 +141,29 @@ export default function RepFinancials() {
                     {fmtDateTime(t.created_at)} · <Num value={t.items?.length ?? 0} /> صنف
                   </div>
                 </div>
-                <div className="text-end shrink-0">
+                <div className="text-end shrink-0 space-y-1">
                   <Money value={t.total_amount} className="font-extrabold block" />
                   <PaymentBadge status={t.payment_status} />
                 </div>
-              </div>
+                <Eye className="size-4 text-muted-foreground shrink-0" />
+              </button>
             ))}
           </div>
         )}
       </div>
+
+      {/* Invoice viewer with download-as-image + WhatsApp share actions */}
+      <Sheet open={!!selected} onClose={() => setSelectedId(null)} title="الفاتورة">
+        {selected && (
+          <Invoice
+            transaction={selected}
+            customer={selected.customer}
+            rep={selected.rep}
+            store={selected.store}
+            items={selected.items ?? []}
+          />
+        )}
+      </Sheet>
     </div>
   )
 }

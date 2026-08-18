@@ -4,6 +4,8 @@ import {
   Boxes,
   Plus,
   ImagePlus,
+  Camera,
+  Maximize2,
   X,
   Loader2,
   PackagePlus,
@@ -30,6 +32,8 @@ export default function RepInventory() {
   const [uploading, setUploading] = useState(false)
   const [busy, setBusy] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
+  const cameraRef = useRef<HTMLInputElement>(null)
+  const [fullscreen, setFullscreen] = useState<string | null>(null)
 
   function openAdd() {
     setEditing(null)
@@ -142,12 +146,21 @@ export default function RepInventory() {
           {myStock.map((item) => (
             <div key={item.id} className="card p-3.5 flex items-center gap-3">
               {item.product_image_url ? (
-                <img
-                  src={item.product_image_url}
-                  alt={item.product_name}
-                  className="size-14 shrink-0 rounded-xl object-cover border border-border"
-                  loading="lazy"
-                />
+                <button
+                  onClick={() => setFullscreen(item.product_image_url!)}
+                  className="size-14 shrink-0 rounded-xl overflow-hidden border border-border relative group"
+                  aria-label={`عرض صورة ${item.product_name}`}
+                >
+                  <img
+                    src={item.product_image_url}
+                    alt={item.product_name}
+                    className="size-full object-cover"
+                    loading="lazy"
+                  />
+                  <span className="absolute inset-0 grid place-items-center bg-black/40 text-white opacity-0 group-hover:opacity-100 transition-opacity">
+                    <Maximize2 className="size-5" />
+                  </span>
+                </button>
               ) : (
                 <span className="grid size-14 shrink-0 place-items-center rounded-xl bg-muted text-muted-foreground">
                   <Boxes className="size-7" />
@@ -194,7 +207,7 @@ export default function RepInventory() {
             <label className="label">صورة المنتج</label>
             <button
               type="button"
-              onClick={() => fileRef.current?.click()}
+              onClick={() => preview && setFullscreen(preview)}
               className="relative w-full aspect-video rounded-xl border-2 border-dashed border-border bg-muted/40 flex items-center justify-center overflow-hidden"
             >
               {preview ? (
@@ -206,7 +219,7 @@ export default function RepInventory() {
                   ) : (
                     <ImagePlus className="size-7" />
                   )}
-                  <span className="text-sm font-bold">{uploading ? 'جارٍ الرفع...' : 'اختر صورة من المعرض'}</span>
+                  <span className="text-sm font-bold">{uploading ? 'جارٍ الرفع...' : 'أضف صورة للمنتج'}</span>
                 </span>
               )}
               {preview && (
@@ -215,10 +228,37 @@ export default function RepInventory() {
                 </span>
               )}
             </button>
+
+            <div className="grid grid-cols-2 gap-2 mt-2">
+              <button
+                type="button"
+                onClick={() => fileRef.current?.click()}
+                disabled={uploading}
+                className="btn-outline btn-md"
+              >
+                <ImagePlus className="size-5" /> من المعرض
+              </button>
+              <button
+                type="button"
+                onClick={() => cameraRef.current?.click()}
+                disabled={uploading}
+                className="btn-outline btn-md"
+              >
+                <Camera className="size-5" /> التقاط صورة
+              </button>
+            </div>
             <input
               ref={fileRef}
               type="file"
               accept="image/*"
+              className="hidden"
+              onChange={(e) => handleImage(e.target.files?.[0])}
+            />
+            <input
+              ref={cameraRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
               className="hidden"
               onChange={(e) => handleImage(e.target.files?.[0])}
             />
@@ -251,7 +291,7 @@ export default function RepInventory() {
               />
             </div>
             <div>
-              <label htmlFor="pprice" className="label">سعر القطعة (ر.س)</label>
+              <label htmlFor="pprice" className="label">سعر القطعة (أ.م)</label>
               <input
                 id="pprice"
                 type="number"
@@ -271,6 +311,25 @@ export default function RepInventory() {
           </p>
         </div>
       </Sheet>
+
+      {/* Fullscreen image preview */}
+      {fullscreen && (
+        <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/90 p-4" dir="rtl">
+          <button
+            onClick={() => setFullscreen(null)}
+            className="absolute top-4 end-4 grid size-11 place-items-center rounded-full bg-white/10 text-white"
+            aria-label="إغلاق المعاينة"
+          >
+            <X className="size-6" />
+          </button>
+          <img
+            src={fullscreen}
+            alt="معاينة المنتج"
+            className="max-h-[92dvh] max-w-full rounded-xl object-contain shadow-2xl"
+            onClick={() => setFullscreen(null)}
+          />
+        </div>
+      )}
     </div>
   )
 }

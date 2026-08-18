@@ -697,6 +697,64 @@ begin
 end
 $$;
 
+-- 8) LIVE LOCATION TRACKING — RLS + realtime (idempotent)
+--    Ensures managers can read their store's rep_locations rows and reps can
+--    only insert their own, and that the table is part of the realtime
+--    publication so the manager's live map updates as reps move.
+
+create or replace function public.current_store_id()
+returns uuid
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select store_id from public.users where id = auth.uid();
+$$;
+
+create or replace function public.is_manager()
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1 from public.users
+    where id = auth.uid() and role = 'manager'
+  );
+$$;
+
+alter table public.rep_locations enable row level security;
+
+drop policy if exists locations_select on public.rep_locations;
+create policy "locations_select"
+  on public.rep_locations for select
+  using (
+    (public.is_manager() and store_id = public.current_store_id())
+    or rep_id = auth.uid()
+  );
+
+drop policy if exists locations_insert on public.rep_locations;
+create policy "locations_insert"
+  on public.rep_locations for insert
+  with check (store_id = public.current_store_id() and rep_id = auth.uid());
+
+do $$
+begin
+  if exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
+    if not exists (
+      select 1 from pg_publication_tables
+      where pubname = 'supabase_realtime'
+        and schemaname = 'public'
+        and tablename = 'rep_locations'
+    ) then
+      alter publication supabase_realtime add table public.rep_locations;
+    end if;
+  end if;
+end
+$$;
+
 -- Force PostgREST to reload its schema cache so the new RPCs are visible to
 -- the anon key immediately (avoids PGRST202 "Could not find the function"
 -- when the SQL editor / tooling did not auto-refresh it).

@@ -59,10 +59,18 @@ export default function RepSale() {
 
   const total = useMemo(() => cart.reduce((s, l) => s + l.quantity * l.unit_price, 0), [cart])
 
+  // The payment mode is the source of truth for how the invoice is recorded:
+  // - cash (نقداً): full amount paid up front -> paid = total, no debt.
+  // - debt (آجل): nothing paid -> paid = 0, full amount becomes debt.
+  // - partial (دفعة جزئية): paid = typed amount, debt = total - paid.
+  // This guarantees a cash sale can never be recorded as a debt, even if the
+  // cart total changed after the mode was selected.
   const paid = useMemo(() => {
+    if (payMode === 'cash') return total
+    if (payMode === 'debt') return 0
     const v = parseFloat(paidInput)
     return Number.isFinite(v) ? Math.min(Math.max(v, 0), total) : 0
-  }, [paidInput, total])
+  }, [payMode, paidInput, total])
 
   const debt = Math.max(0, total - paid)
 
@@ -319,7 +327,13 @@ export default function RepSale() {
             value={paidInput}
             onChange={(e) => {
               setPaidInput(e.target.value)
-              setPayMode(total > 0 && Number(e.target.value) > 0 && Number(e.target.value) < total ? 'partial' : payMode)
+              // Typing an amount drives the mode so the recorded invoice always
+              // matches what the rep sees: 0 -> debt, full -> cash, middle -> partial.
+              const v = parseFloat(e.target.value)
+              if (total <= 0) return
+              if (!Number.isFinite(v) || v <= 0) setPayMode('debt')
+              else if (v >= total) setPayMode('cash')
+              else setPayMode('partial')
             }}
             placeholder="0.00"
           />
@@ -344,7 +358,7 @@ export default function RepSale() {
                 limitInfo.over ? 'bg-destructive/10 text-destructive' : 'bg-info/10 text-info'
               }`}
             >
-              حد الدين: <span className="tnum" dir="ltr">{limitInfo.limit.toFixed(2)} ر.س</span>
+              حد الدين: <span className="tnum" dir="ltr">{limitInfo.limit.toFixed(2)} أ.م</span>
               {' · '}الدين الحالي: <span className="tnum" dir="ltr">{limitInfo.current.toFixed(2)}</span>
               {limitInfo.over ? (
                 <span className="block mt-1">تجاوز حد الدين — لا يمكن إصدار الفاتورة بهذا المبلغ الآجل.</span>

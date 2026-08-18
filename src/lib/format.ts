@@ -1,4 +1,4 @@
-export const CURRENCY = 'ر.س'
+export const CURRENCY = 'أ.م'
 
 const moneyFmt = new Intl.NumberFormat('en-US', {
   minimumFractionDigits: 2,
