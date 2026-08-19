@@ -30,17 +30,21 @@ export default function Invoice({
         ? { label: 'دين', en: 'DEBT', cls: 'bg-red-600 text-white' }
         : { label: 'جزئي', en: 'PARTIAL', cls: 'bg-amber-500 text-white' }
 
+  async function renderInvoiceCanvas(): Promise<HTMLCanvasElement> {
+    if (!ref.current) throw new Error('invoice not mounted')
+    return html2canvas(ref.current, {
+      scale: 2,
+      useCORS: true,
+      backgroundColor: '#ffffff',
+      logging: false,
+    })
+  }
+
   async function downloadImage() {
-    if (!ref.current) return
     setBusy(true)
     try {
       show('info', 'جارٍ إنشاء صورة الفاتورة...')
-      const canvas = await html2canvas(ref.current, {
-        scale: 2,
-        useCORS: true,
-        backgroundColor: '#ffffff',
-        logging: false,
-      })
+      const canvas = await renderInvoiceCanvas()
       const link = document.createElement('a')
       link.download = `BB-Sales-invoice-${transaction.id.slice(0, 8)}.png`
       link.href = canvas.toDataURL('image/png')
@@ -54,8 +58,8 @@ export default function Invoice({
     }
   }
 
-  function shareWhatsApp() {
-    const lines = [
+  function whatsAppText() {
+    return [
       '*BB Sales | بي بي سيلز — فاتورة*',
       `المتجر: ${store?.name ?? '—'}`,
       `المندوب: ${rep?.full_name ?? '—'}${rep?.truck_id ? ` | الشاحنة: ${rep.truck_id}` : ''}`,
@@ -71,9 +75,40 @@ export default function Invoice({
       `*المدفوع:* ${transaction.paid_amount.toFixed(2)} أ.م`,
       `*الدين المتبقي:* ${transaction.debt_amount.toFixed(2)} أ.م`,
       `*الحالة:* ${statusMeta.label} (${statusMeta.en})`,
-    ]
-    const url = `https://wa.me/?text=${encodeURIComponent(lines.join('\n'))}`
-    window.open(url, '_blank')
+    ].join('\n')
+  }
+
+  /**
+   * Share the invoice as an image. Preferred path: render the receipt to a PNG
+   * and hand it to the native share sheet (WhatsApp shows it as an attached
+   * image). Fallback: open WhatsApp with the invoice text via wa.me — that URL
+   * always works, including on desktop where file sharing is unsupported.
+   */
+  async function shareWhatsApp() {
+    setBusy(true)
+    try {
+      const canvas = await renderInvoiceCanvas()
+      const blob = await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/png'))
+      const text = whatsAppText()
+      if (blob && navigator.canShare) {
+        const file = new File([blob], `BB-Sales-invoice-${transaction.id.slice(0, 8)}.png`, {
+          type: 'image/png',
+        })
+        if (navigator.canShare({ files: [file], text })) {
+          await navigator.share({ files: [file], text, title: `فاتورة ${customer?.name ?? ''}` })
+          return
+        }
+      }
+      window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank')
+    } catch (e) {
+      // AbortError = the user dismissed the share sheet; not a real failure.
+      if ((e as Error)?.name !== 'AbortError') {
+        console.error(e)
+        show('error', 'تعذر مشاركة الفاتورة')
+      }
+    } finally {
+      setBusy(false)
+    }
   }
 
   return (
@@ -171,8 +206,8 @@ export default function Invoice({
           {busy ? <Loader2 className="size-5 animate-spin" /> : <Download className="size-5" />}
           تنزيل كصورة
         </button>
-        <button onClick={shareWhatsApp} className="btn-accent btn-lg w-full">
-          <Share2 className="size-5" />
+        <button onClick={shareWhatsApp} disabled={busy} className="btn-accent btn-lg w-full">
+          {busy ? <Loader2 className="size-5 animate-spin" /> : <Share2 className="size-5" />}
           مشاركة واتساب
         </button>
       </div>

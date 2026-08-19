@@ -78,7 +78,9 @@ function useRepTracking(addRepLocation: (lat: number, lng: number) => Promise<vo
       (err) => {
         setStatus(err.code === 1 ? 'denied' : 'off')
       },
-      { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 },
+      // Ultra-high accuracy: GPS + timeout 10s so rep and customer pins land
+      // exactly, not on coarse cell-tower estimates.
+      { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 },
     )
     return () => navigator.geolocation.clearWatch(watchId)
   }, [enabled])

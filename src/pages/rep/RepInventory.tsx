@@ -64,7 +64,8 @@ export default function RepInventory() {
       show('success', 'تم رفع صورة المنتج')
     } catch (e) {
       console.error(e)
-      show('error', 'تعذر رفع الصورة')
+      const raw = (e as Error)?.message ?? ''
+      show('error', raw.includes('row-level security') ? 'تعذر رفع الصورة — تأكد من تفعيل التخزين وإعادة تشغيل مِلف الترحيل في Supabase' : 'تعذر رفع الصورة')
     } finally {
       setUploading(false)
     }
@@ -252,7 +253,10 @@ export default function RepInventory() {
               type="file"
               accept="image/*"
               className="hidden"
-              onChange={(e) => handleImage(e.target.files?.[0])}
+              onChange={(e) => {
+                handleImage(e.target.files?.[0])
+                e.target.value = ''
+              }}
             />
             <input
               ref={cameraRef}
@@ -260,7 +264,10 @@ export default function RepInventory() {
               accept="image/*"
               capture="environment"
               className="hidden"
-              onChange={(e) => handleImage(e.target.files?.[0])}
+              onChange={(e) => {
+                handleImage(e.target.files?.[0])
+                e.target.value = ''
+              }}
             />
           </div>
 

@@ -5,7 +5,7 @@ import { MapPinned, Truck, Radio, Store, UserRound } from 'lucide-react'
 import { pinIcon, shopIcon } from '../../lib/mapIcon'
 import { latestRepLocations, repDailySummary } from '../../lib/selectors'
 import { fmtTime, todayKey } from '../../lib/format'
-import { haversineMeters, STREETS_TILE_URL, STREETS_ATTRIBUTION } from '../../lib/geo'
+import { haversineMeters, STREETS_TILE_URL, STREETS_SUBDOMAINS, STREETS_ATTRIBUTION } from '../../lib/geo'
 import { EmptyState, Money } from '../../components/ui'
 import type { Customer } from '../../lib/types'
 
@@ -96,7 +96,11 @@ export default function ManagerLiveMap() {
               style={{ height: '100%', width: '100%' }}
               className="z-0"
             >
-              <TileLayer attribution={STREETS_ATTRIBUTION} url={STREETS_TILE_URL} />
+              <TileLayer
+                attribution={STREETS_ATTRIBUTION}
+                url={STREETS_TILE_URL}
+                subdomains={STREETS_SUBDOMAINS}
+              />
 
               {/* Customer markers (highlighted when a rep is nearby) */}
               {customersWithPos.map((c) => {

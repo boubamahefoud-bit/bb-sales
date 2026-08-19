@@ -678,12 +678,45 @@ begin
 end;
 $$;
 
--- Rep-portal image uploads (unique-link mode): the client uploads with the
--- anon key into a folder named by the rep's secret rep_token. Only allow
--- anon inserts whose first path folder is a real rep_token.
+-- 7b) PRODUCT IMAGE UPLOADS — storage bucket + policies (idempotent)
+--     FIX: previously only the rep-token anon policy existed here, so
+--     session-mode reps (email/password) could NOT upload ("فشل إضافة الصورة"):
+--     no `product-images` bucket was guaranteed to exist and no authenticated
+--     insert/read policies were created. This block creates the public bucket
+--     and the full policy set so both session-mode and rep-portal uploads work.
 do $$
 begin
   if exists (select 1 from pg_catalog.pg_namespace where nspname = 'storage') then
+    insert into storage.buckets (id, name, public)
+    values ('product-images', 'product-images', true)
+    on conflict (id) do nothing;
+
+    -- Anyone can read product images (public bucket).
+    drop policy if exists product_images_public_read on storage.objects;
+    create policy "product_images_public_read"
+      on storage.objects for select
+      using (bucket_id = 'product-images');
+
+    -- Logged-in app users (session mode) may upload/update/delete.
+    drop policy if exists product_images_app_insert on storage.objects;
+    create policy "product_images_app_insert"
+      on storage.objects for insert
+      with check (bucket_id = 'product-images' and auth.role() = 'authenticated');
+
+    drop policy if exists product_images_app_update on storage.objects;
+    create policy "product_images_app_update"
+      on storage.objects for update
+      using (bucket_id = 'product-images' and auth.role() = 'authenticated');
+
+    drop policy if exists product_images_app_delete on storage.objects;
+    create policy "product_images_app_delete"
+      on storage.objects for delete
+      using (bucket_id = 'product-images' and auth.role() = 'authenticated');
+
+    -- Rep-portal (unique-link) uploads: no email/password session exists, so
+    -- the client uploads with the anon key under a folder named by the rep's
+    -- secret rep_token. The policy only grants anon inserts to paths whose
+    -- first folder is a real, non-null rep_token — the token IS the credential.
     drop policy if exists product_images_rep_token_upload on storage.objects;
     create policy "product_images_rep_token_upload"
       on storage.objects for insert
