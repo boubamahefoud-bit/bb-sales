@@ -1,12 +1,13 @@
 import { useMemo } from 'react'
-import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet'
+import { MapContainer, Marker, Popup } from 'react-leaflet'
 import { useStore } from '../../lib/store'
 import { MapPinned, Truck, Radio, Store, UserRound } from 'lucide-react'
 import { pinIcon, shopIcon } from '../../lib/mapIcon'
 import { latestRepLocations, repDailySummary } from '../../lib/selectors'
 import { fmtTime, todayKey } from '../../lib/format'
-import { haversineMeters, STREETS_TILE_URL, STREETS_ATTRIBUTION } from '../../lib/geo'
+import { haversineMeters } from '../../lib/geo'
 import { EmptyState, Money } from '../../components/ui'
+import VectorTileLayer from '../../components/VectorTileLayer'
 import type { Customer } from '../../lib/types'
 
 const REP_COLORS = ['#2563eb', '#059669', '#dc2626', '#f59e0b', '#0891b2', '#7c3aed', '#db2777', '#65a30d']
@@ -96,11 +97,8 @@ export default function ManagerLiveMap() {
               style={{ height: '100%', width: '100%' }}
               className="z-0"
             >
-              <TileLayer
-                attribution={STREETS_ATTRIBUTION}
-                url={STREETS_TILE_URL}
-                detectRetina
-              />
+              {/* High-detail vector basemap (OpenFreeMap/MapLibre, full POI) */}
+              <VectorTileLayer />
 
               {/* Customer markers (highlighted when a rep is nearby) */}
               {customersWithPos.map((c) => {

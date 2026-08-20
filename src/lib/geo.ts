@@ -11,10 +11,16 @@ export function haversineMeters(lat1: number, lng1: number, lat2: number, lng2: 
 }
 
 /**
- * High-detail, Google-Maps-style basemap with full POI (restaurants, shops,
- * markets, buildings, street names, local landmarks). Esri World Street Map is
- * free with no API key / no billing and rendered via detectRetina at 2x on
- * high-DPI screens for crisp pins and labels.
+ * High-detail, Google-Maps-style vector basemap with full POI (restaurants,
+ * shops, markets, buildings, street names, local landmarks). OpenFreeMap
+ * serves the "liberty" style (OpenMapTiles) for free with no API key, rendered
+ * via MapLibre GL — the open-source Mapbox GL fork — so it delivers true
+ * vector tiles with smooth zooming and crisp labels at any DPI.
+ */
+export const OPENFREEMAP_STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty'
+
+/**
+ * Raster fallback (Esri World Street Map, retina-aware) kept for reference.
  */
 export const STREETS_TILE_URL =
   'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}'
