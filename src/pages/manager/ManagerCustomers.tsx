@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react'
 import { useStore } from '../../lib/store'
-import { MapContainer, TileLayer, Marker, useMapEvents } from 'react-leaflet'
+import { MapContainer, Marker, useMapEvents } from 'react-leaflet'
 import { pinIcon } from '../../lib/mapIcon'
+import VectorTileLayer from '../../components/VectorTileLayer'
 import {
   Contact,
   Plus,
@@ -423,10 +424,7 @@ function LocationPicker({
         style={{ height: '100%', width: '100%' }}
         className="z-0"
       >
-        <TileLayer
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-        />
+        <VectorTileLayer />
         <ClickHandler />
         {lat != null && lng != null && <Marker position={[lat, lng]} icon={pinIcon('#2563eb', 30)} />}
       </MapContainer>
