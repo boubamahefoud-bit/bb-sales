@@ -968,6 +968,22 @@ create policy "recon_update"
 -- Only applies on Supabase (storage schema present); skipped on
 -- a bare local Postgres so the file remains fully portable.
 -- ============================================================
+
+-- Security-definer helper so storage policies can validate a rep_token
+-- folder WITHOUT the anon/authenticated role needing SELECT on users
+-- (users RLS would otherwise make the folder check always fail for anon).
+create or replace function public.rep_token_exists(p_folder text)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1 from public.users where rep_token::text = p_folder
+  );
+$$;
+
 do $$
 begin
   if exists (select 1 from pg_catalog.pg_namespace where nspname = 'storage') then
@@ -986,7 +1002,11 @@ begin
 
     create policy "product_images_app_insert"
       on storage.objects for insert
-      with check (bucket_id = 'product-images' and auth.role() = 'authenticated');
+      with check (
+        bucket_id = 'product-images'
+        and auth.role() = 'authenticated'
+        and (storage.foldername(name))[1] = current_store_id()::text
+      );
 
     -- Rep-portal (unique-link) uploads: no email/password session exists, so
     -- the client uploads with the anon key under a folder named by the rep's
@@ -997,18 +1017,30 @@ begin
       on storage.objects for insert
       with check (
         bucket_id = 'product-images'
-        and (storage.foldername(name))[1] in (
-          select rep_token::text from public.users where rep_token is not null
-        )
+        and public.rep_token_exists((storage.foldername(name))[1])
       );
 
     create policy "product_images_app_update"
       on storage.objects for update
-      using (bucket_id = 'product-images' and auth.role() = 'authenticated');
+      using (
+        bucket_id = 'product-images'
+        and auth.role() = 'authenticated'
+        and (
+          (storage.foldername(name))[2] = auth.uid()::text
+          or (is_manager() and (storage.foldername(name))[1] = current_store_id()::text)
+        )
+      );
 
     create policy "product_images_app_delete"
       on storage.objects for delete
-      using (bucket_id = 'product-images' and auth.role() = 'authenticated');
+      using (
+        bucket_id = 'product-images'
+        and auth.role() = 'authenticated'
+        and (
+          (storage.foldername(name))[2] = auth.uid()::text
+          or (is_manager() and (storage.foldername(name))[1] = current_store_id()::text)
+        )
+      );
   end if;
 end
 $$;

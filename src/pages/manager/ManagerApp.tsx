@@ -14,18 +14,21 @@ import {
   LogOut,
   ShieldCheck,
   Contact,
+  Boxes,
 } from 'lucide-react'
 import ManagerDashboard from './ManagerDashboard'
 import ManagerReps from './ManagerReps'
 import ManagerInvoices from './ManagerInvoices'
 import ManagerLiveMap from './ManagerLiveMap'
 import ManagerCustomers from './ManagerCustomers'
+import ManagerVanInventory from './ManagerVanInventory'
 
-type Tab = 'dashboard' | 'reps' | 'customers' | 'invoices' | 'map'
+type Tab = 'dashboard' | 'reps' | 'customers' | 'invoices' | 'map' | 'inventory'
 
 const NAV: { id: Tab; label: string; icon: typeof LayoutDashboard }[] = [
   { id: 'dashboard', label: 'لوحة التحكم', icon: LayoutDashboard },
   { id: 'reps', label: 'المندوبون', icon: Users },
+  { id: 'inventory', label: 'المخزون', icon: Boxes },
   { id: 'customers', label: 'العملاء', icon: Contact },
   { id: 'invoices', label: 'الفواتير', icon: Receipt },
   { id: 'map', label: 'الخريطة الحية', icon: MapPinned },
@@ -145,6 +148,7 @@ export default function ManagerApp() {
         <main className="px-4 sm:px-6 lg:px-8 py-6 max-w-6xl">
           {tab === 'dashboard' && <ManagerDashboard />}
           {tab === 'reps' && <ManagerReps />}
+          {tab === 'inventory' && <ManagerVanInventory />}
           {tab === 'customers' && <ManagerCustomers />}
           {tab === 'invoices' && <ManagerInvoices />}
           {tab === 'map' && <ManagerLiveMap />}

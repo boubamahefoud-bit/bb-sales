@@ -11,14 +11,13 @@ export function haversineMeters(lat1: number, lng1: number, lat2: number, lng2: 
 }
 
 /**
- * High-detail, Google-Maps-style basemap built from OpenStreetMap data with
- * full POI (shops, landmarks, street names, markets) and retina `{r}` tiles.
- * CARTO Voyager is free (no API key / no billing) and rendered by a fast CDN.
+ * High-detail, Google-Maps-style basemap with full POI (restaurants, shops,
+ * markets, buildings, street names, local landmarks). Esri World Street Map is
+ * free with no API key / no billing and rendered via detectRetina at 2x on
+ * high-DPI screens for crisp pins and labels.
  */
 export const STREETS_TILE_URL =
-  'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png'
-
-export const STREETS_SUBDOMAINS = 'abcd'
+  'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}'
 
 export const STREETS_ATTRIBUTION =
-  '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
+  '&copy; <a href="https://www.esri.com">Esri</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'

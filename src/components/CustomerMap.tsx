@@ -2,7 +2,7 @@ import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet'
 import { shopIcon } from '../lib/mapIcon'
 import { Phone, MapPin, Store, UserRound } from 'lucide-react'
 import { Money } from './ui'
-import { STREETS_TILE_URL, STREETS_SUBDOMAINS, STREETS_ATTRIBUTION } from '../lib/geo'
+import { STREETS_TILE_URL, STREETS_ATTRIBUTION } from '../lib/geo'
 
 export interface MapCustomer {
   id: string
@@ -40,11 +40,11 @@ export default function CustomerMap({
         style={{ height: '100%', width: '100%' }}
         className="z-0"
       >
-        {/* High-detail streets/places basemap (CARTO Voyager, OSM data) */}
+        {/* High-detail streets/places basemap (Esri, full POI, retina) */}
         <TileLayer
           attribution={STREETS_ATTRIBUTION}
           url={STREETS_TILE_URL}
-          subdomains={STREETS_SUBDOMAINS}
+          detectRetina
         />
         {withPos.map((c) => (
           <Marker key={c.id} position={[c.latitude, c.longitude]} icon={shopIcon('#2563eb', 34)}>

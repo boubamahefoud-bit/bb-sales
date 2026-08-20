@@ -21,7 +21,6 @@ import {
   joinTransactions,
 } from '../../lib/selectors'
 import { todayKey } from '../../lib/format'
-import ManagerVanInventory from './ManagerVanInventory'
 
 export default function ManagerDashboard() {
   const { store, data } = useStore()
@@ -116,9 +115,6 @@ export default function ManagerDashboard() {
           </div>
         )}
       </div>
-
-      {/* Van inventory of reps */}
-      <ManagerVanInventory />
 
       {/* Recent transactions */}
       <div>

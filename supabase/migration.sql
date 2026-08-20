@@ -684,6 +684,22 @@ $$;
 --     no `product-images` bucket was guaranteed to exist and no authenticated
 --     insert/read policies were created. This block creates the public bucket
 --     and the full policy set so both session-mode and rep-portal uploads work.
+
+-- Security-definer helper so storage policies can validate a rep_token folder
+-- WITHOUT the anon/authenticated role needing SELECT on users (users RLS would
+-- otherwise make the folder check always fail for anon).
+create or replace function public.rep_token_exists(p_folder text)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1 from public.users where rep_token::text = p_folder
+  );
+$$;
+
 do $$
 begin
   if exists (select 1 from pg_catalog.pg_namespace where nspname = 'storage') then
@@ -696,35 +712,57 @@ begin
     create policy "product_images_public_read"
       on storage.objects for select
       using (bucket_id = 'product-images');
-
-    -- Logged-in app users (session mode) may upload/update/delete.
+    -- Logged-in app users (session mode) may upload/update/delete. Scoped:
+    -- - insert: only into the user's own store folder (prevents a rep from
+    --   writing into another store's image space).
+    -- - update/delete: only the object owner (second path folder = uid) or a
+    --   manager of that object's store (prevents any authenticated user from
+    --   tampering with other reps' product images).
     drop policy if exists product_images_app_insert on storage.objects;
     create policy "product_images_app_insert"
       on storage.objects for insert
-      with check (bucket_id = 'product-images' and auth.role() = 'authenticated');
+      with check (
+        bucket_id = 'product-images'
+        and auth.role() = 'authenticated'
+        and (storage.foldername(name))[1] = current_store_id()::text
+      );
 
     drop policy if exists product_images_app_update on storage.objects;
     create policy "product_images_app_update"
       on storage.objects for update
-      using (bucket_id = 'product-images' and auth.role() = 'authenticated');
+      using (
+        bucket_id = 'product-images'
+        and auth.role() = 'authenticated'
+        and (
+          (storage.foldername(name))[2] = auth.uid()::text
+          or (is_manager() and (storage.foldername(name))[1] = current_store_id()::text)
+        )
+      );
 
     drop policy if exists product_images_app_delete on storage.objects;
     create policy "product_images_app_delete"
       on storage.objects for delete
-      using (bucket_id = 'product-images' and auth.role() = 'authenticated');
+      using (
+        bucket_id = 'product-images'
+        and auth.role() = 'authenticated'
+        and (
+          (storage.foldername(name))[2] = auth.uid()::text
+          or (is_manager() and (storage.foldername(name))[1] = current_store_id()::text)
+        )
+      );
 
     -- Rep-portal (unique-link) uploads: no email/password session exists, so
     -- the client uploads with the anon key under a folder named by the rep's
     -- secret rep_token. The policy only grants anon inserts to paths whose
     -- first folder is a real, non-null rep_token — the token IS the credential.
+    -- Uses the security-definer rep_token_exists() helper so the anon role is
+    -- not blocked by users RLS when the policy checks the token folder.
     drop policy if exists product_images_rep_token_upload on storage.objects;
     create policy "product_images_rep_token_upload"
       on storage.objects for insert
       with check (
         bucket_id = 'product-images'
-        and (storage.foldername(name))[1] in (
-          select rep_token::text from public.users where rep_token is not null
-        )
+        and public.rep_token_exists((storage.foldername(name))[1])
       );
   end if;
 end
