@@ -20,6 +20,23 @@ export function haversineMeters(lat1: number, lng1: number, lat2: number, lng2: 
 export const OPENFREEMAP_STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty'
 
 /**
+ * Esri World Imagery — global satellite imagery, free with no API key. Used as
+ * the base raster layer under the OpenFreeMap vector layers (roads, labels,
+ * POIs) to build the hybrid satellite view. All sources are 256px WebMercator
+ * tiles, so raster and vector align pixel-perfectly at every zoom level.
+ */
+export const SATELLITE_TILE_URL =
+  'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
+
+export const SATELLITE_ATTRIBUTION = '&copy; Esri, Maxar, Earthstar Geographics'
+
+/**
+ * OpenStreetMap Nominatim geocoding endpoint for place search (cities, streets,
+ * shops, landmarks, addresses). Free, CORS-enabled, no API key.
+ */
+export const NOMINATIM_SEARCH_URL = 'https://nominatim.openstreetmap.org/search'
+
+/**
  * Raster fallback (Esri World Street Map, retina-aware) kept for reference.
  */
 export const STREETS_TILE_URL =
