@@ -8,7 +8,6 @@ import {
   LayoutDashboard,
   Users,
   Receipt,
-  MapPinned,
   Moon,
   Sun,
   LogOut,
@@ -19,11 +18,10 @@ import {
 import ManagerDashboard from './ManagerDashboard'
 import ManagerReps from './ManagerReps'
 import ManagerInvoices from './ManagerInvoices'
-import ManagerLiveMap from './ManagerLiveMap'
 import ManagerCustomers from './ManagerCustomers'
 import ManagerVanInventory from './ManagerVanInventory'
 
-type Tab = 'dashboard' | 'reps' | 'customers' | 'invoices' | 'map' | 'inventory'
+type Tab = 'dashboard' | 'reps' | 'customers' | 'invoices' | 'inventory'
 
 const NAV: { id: Tab; label: string; icon: typeof LayoutDashboard }[] = [
   { id: 'dashboard', label: 'لوحة التحكم', icon: LayoutDashboard },
@@ -31,7 +29,6 @@ const NAV: { id: Tab; label: string; icon: typeof LayoutDashboard }[] = [
   { id: 'inventory', label: 'المخزون', icon: Boxes },
   { id: 'customers', label: 'العملاء', icon: Contact },
   { id: 'invoices', label: 'الفواتير', icon: Receipt },
-  { id: 'map', label: 'الخريطة الحية', icon: MapPinned },
 ]
 
 export default function ManagerApp() {
@@ -151,7 +148,6 @@ export default function ManagerApp() {
           {tab === 'inventory' && <ManagerVanInventory />}
           {tab === 'customers' && <ManagerCustomers />}
           {tab === 'invoices' && <ManagerInvoices />}
-          {tab === 'map' && <ManagerLiveMap />}
         </main>
       </div>
     </div>

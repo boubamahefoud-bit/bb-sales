@@ -1,8 +1,5 @@
 import { useMemo, useState } from 'react'
 import { useStore } from '../../lib/store'
-import { MapContainer, Marker, useMapEvents } from 'react-leaflet'
-import { pinIcon } from '../../lib/mapIcon'
-import VectorTileLayer from '../../components/VectorTileLayer'
 import {
   Contact,
   Plus,
@@ -12,13 +9,10 @@ import {
   UserRound,
   MapPin,
   Trash2,
-  Map as MapIcon,
-  List,
 } from 'lucide-react'
 import { Money, Sheet, EmptyState, useToast } from '../../components/ui'
 import type { Customer, UserProfile } from '../../lib/types'
 import { customerDebts, repName } from '../../lib/selectors'
-import CustomerMap from '../../components/CustomerMap'
 
 interface CustForm {
   name: string
@@ -39,7 +33,6 @@ export default function ManagerCustomers() {
   const reps = useMemo(() => data.users.filter((u) => u.role === 'sales_rep'), [data.users])
   const debts = useMemo(() => new Map(customerDebts(data).map((c) => [c.customer_id, c])), [data])
 
-  const [view, setView] = useState<'list' | 'map'>('list')
   const [query, setQuery] = useState('')
   const [creating, setCreating] = useState(false)
   const [editing, setEditing] = useState<Customer | null>(null)
@@ -55,23 +48,6 @@ export default function ManagerCustomers() {
     if (!q) return allCustomers
     return allCustomers.filter((c) => c.name.includes(q) || (c.phone ?? '').includes(q))
   }, [allCustomers, query])
-
-  const positioned = useMemo(
-    () =>
-      allCustomers
-        .filter((c) => c.latitude != null && c.longitude != null)
-        .map((c) => ({
-          id: c.id,
-          name: c.name,
-          phone: c.phone ?? null,
-          address: c.address ?? null,
-          latitude: c.latitude as number,
-          longitude: c.longitude as number,
-          repName: repName(data.users, c.created_by_rep_id),
-          totalDebt: debts.get(c.id)?.total_debt ?? 0,
-        })),
-    [allCustomers, debts, data.users],
-  )
 
   function pickCurrentLocation() {
     if (!navigator.geolocation) {
@@ -188,114 +164,82 @@ export default function ManagerCustomers() {
           <span className="tnum">{allCustomers.length}</span> عميل
         </div>
         <div className="flex items-center gap-2">
-          <div className="flex rounded-xl bg-muted p-1 gap-1">
-            <button
-              onClick={() => setView('list')}
-              className={`inline-flex items-center gap-1.5 h-9 px-3 rounded-lg text-sm font-bold transition-colors ${
-                view === 'list' ? 'bg-card text-foreground shadow-card' : 'text-muted-foreground'
-              }`}
-            >
-              <List className="size-4" /> قائمة
-            </button>
-            <button
-              onClick={() => setView('map')}
-              className={`inline-flex items-center gap-1.5 h-9 px-3 rounded-lg text-sm font-bold transition-colors ${
-                view === 'map' ? 'bg-card text-foreground shadow-card' : 'text-muted-foreground'
-              }`}
-            >
-              <MapIcon className="size-4" /> خريطة
-            </button>
-          </div>
           <button onClick={openCreate} className="btn-primary btn-md">
             <Plus className="size-5" /> عميل جديد
           </button>
         </div>
       </div>
 
-      {view === 'map' ? (
-        positioned.length === 0 ? (
-          <EmptyState
-            icon={<MapPin className="size-7" />}
-            title="لا توجد مواقع محددة"
-            desc="أضف مواقع العملاء لرؤيتهم على الخريطة."
-          />
-        ) : (
-          <CustomerMap customers={positioned} height={520} />
-        )
-      ) : (
-        <>
-          <div className="relative">
-            <Search className="absolute start-3 top-1/2 -translate-y-1/2 size-5 text-muted-foreground" />
-            <input
-              className="input ps-11"
-              placeholder="ابحث عن عميل بالاسم أو الهاتف..."
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-            />
-          </div>
+      <div className="relative">
+        <Search className="absolute start-3 top-1/2 -translate-y-1/2 size-5 text-muted-foreground" />
+        <input
+          className="input ps-11"
+          placeholder="ابحث عن عميل بالاسم أو الهاتف..."
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+      </div>
 
-          {filtered.length === 0 ? (
-            <EmptyState
-              icon={<Contact className="size-7" />}
-              title="لا يوجد عملاء بعد"
-              desc="سجّل عملاء متجرك مع أرقامهم وحدود ديونهم ومواقعهم."
-              action={
-                <button onClick={openCreate} className="btn-primary btn-md">
-                  <Plus className="size-5" /> إنشاء أول عميل
-                </button>
-              }
-            />
-          ) : (
-            <div className="space-y-2.5">
-              {filtered.map((c) => {
-                const debt = debts.get(c.id)
-                const over = debt?.debt_limit != null && debt.total_debt > debt.debt_limit
-                return (
-                  <button
-                    key={c.id}
-                    onClick={() => openEdit(c)}
-                    className="card w-full p-4 text-start flex items-center gap-3 hover:border-primary/40"
-                  >
-                    <span className="grid size-11 shrink-0 place-items-center rounded-xl bg-secondary text-secondary-foreground">
-                      <UserRound className="size-6" />
-                    </span>
-                    <span className="flex-1 min-w-0">
-                      <span className="block font-extrabold truncate">{c.name}</span>
-                      <span className="block text-xs text-muted-foreground truncate" dir="ltr">
-                        {c.phone ?? '—'}
-                      </span>
-                      <span className="block text-[11px] text-muted-foreground truncate mt-0.5">
-                        مندوب: {repName(data.users, c.created_by_rep_id)}
-                        {c.latitude != null && (
-                          <>
-                            {' · '}
-                            <MapPin className="inline size-3" /> موقع
-                          </>
-                        )}
-                      </span>
-                    </span>
-                    <span className="text-end shrink-0 space-y-0.5">
-                      {debt && debt.total_debt > 0 ? (
-                        <>
-                          <Money value={debt.total_debt} className="font-extrabold text-destructive block" />
-                          {debt.debt_limit != null ? (
-                            <span className={`block text-[10px] font-bold tnum ${over ? 'text-destructive' : 'text-muted-foreground'}`} dir="ltr">
-                              حد {debt.debt_limit.toFixed(2)} {over ? '· تجاوز' : ''}
-                            </span>
-                          ) : (
-                            <span className="block text-[10px] text-muted-foreground">دين</span>
-                          )}
-                        </>
+      {filtered.length === 0 ? (
+        <EmptyState
+          icon={<Contact className="size-7" />}
+          title="لا يوجد عملاء بعد"
+          desc="سجّل عملاء متجرك مع أرقامهم وحدود ديونهم ومواقعهم."
+          action={
+            <button onClick={openCreate} className="btn-primary btn-md">
+              <Plus className="size-5" /> إنشاء أول عميل
+            </button>
+          }
+        />
+      ) : (
+        <div className="space-y-2.5">
+          {filtered.map((c) => {
+            const debt = debts.get(c.id)
+            const over = debt?.debt_limit != null && debt.total_debt > debt.debt_limit
+            return (
+              <button
+                key={c.id}
+                onClick={() => openEdit(c)}
+                className="card w-full p-4 text-start flex items-center gap-3 hover:border-primary/40"
+              >
+                <span className="grid size-11 shrink-0 place-items-center rounded-xl bg-secondary text-secondary-foreground">
+                  <UserRound className="size-6" />
+                </span>
+                <span className="flex-1 min-w-0">
+                  <span className="block font-extrabold truncate">{c.name}</span>
+                  <span className="block text-xs text-muted-foreground truncate" dir="ltr">
+                    {c.phone ?? '—'}
+                  </span>
+                  <span className="block text-[11px] text-muted-foreground truncate mt-0.5">
+                    مندوب: {repName(data.users, c.created_by_rep_id)}
+                    {c.latitude != null && (
+                      <>
+                        {' · '}
+                        <MapPin className="inline size-3" /> موقع
+                      </>
+                    )}
+                  </span>
+                </span>
+                <span className="text-end shrink-0 space-y-0.5">
+                  {debt && debt.total_debt > 0 ? (
+                    <>
+                      <Money value={debt.total_debt} className="font-extrabold text-destructive block" />
+                      {debt.debt_limit != null ? (
+                        <span className={`block text-[10px] font-bold tnum ${over ? 'text-destructive' : 'text-muted-foreground'}`} dir="ltr">
+                          حد {debt.debt_limit.toFixed(2)} {over ? '· تجاوز' : ''}
+                        </span>
                       ) : (
-                        <span className="badge-accent block w-fit ms-auto">لا دين</span>
+                        <span className="block text-[10px] text-muted-foreground">دين</span>
                       )}
-                    </span>
-                  </button>
-                )
-              })}
-            </div>
-          )}
-        </>
+                    </>
+                  ) : (
+                    <span className="badge-accent block w-fit ms-auto">لا دين</span>
+                  )}
+                </span>
+              </button>
+            )
+          })}
+        </div>
       )}
 
       {/* Create / Edit sheet */}
@@ -381,53 +325,11 @@ export default function ManagerCustomers() {
                 {form.latitude!.toFixed(6)}, {form.longitude!.toFixed(6)}
               </div>
             ) : (
-              <p className="text-xs text-muted-foreground">اضغط الزر أو انقر على الخريطة لتحديد الموقع.</p>
+              <p className="text-xs text-muted-foreground">اضغط الزر وأنت في مكان العميل لالتقاط إحداثياته بدقة.</p>
             )}
-            <LocationPicker
-              lat={form.latitude}
-              lng={form.longitude}
-              onChange={(lat, lng) => setForm((f) => ({ ...f, latitude: lat, longitude: lng }))}
-            />
           </div>
         </div>
       </Sheet>
-    </div>
-  )
-}
-
-function LocationPicker({
-  lat,
-  lng,
-  onChange,
-}: {
-  lat: number | null
-  lng: number | null
-  onChange: (lat: number, lng: number) => void
-}) {
-  const center: [number, number] = lat != null && lng != null ? [lat, lng] : [24.7136, 46.6753]
-
-  function ClickHandler() {
-    useMapEvents({
-      click(e) {
-        onChange(e.latlng.lat, e.latlng.lng)
-      },
-    })
-    return null
-  }
-
-  return (
-    <div dir="ltr" className="h-56 rounded-xl overflow-hidden border border-border z-0">
-      <MapContainer
-        center={center}
-        zoom={13}
-        scrollWheelZoom={false}
-        style={{ height: '100%', width: '100%' }}
-        className="z-0"
-      >
-        <VectorTileLayer />
-        <ClickHandler />
-        {lat != null && lng != null && <Marker position={[lat, lng]} icon={pinIcon('#2563eb', 30)} />}
-      </MapContainer>
     </div>
   )
 }
